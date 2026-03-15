@@ -72,7 +72,7 @@ const RFCOMM_CONNECT_TIMEOUT_SECS: u64 = 10;
 
 /// Read buffer size. MW75 packets are 63 bytes; RFCOMM may deliver
 /// arbitrary-sized chunks (commonly 64, 128, or up to MTU).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 const READ_BUF_SIZE: usize = 1024;
 
 /// Post-BLE-disconnect settle time in milliseconds.
