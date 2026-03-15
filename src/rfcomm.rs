@@ -57,7 +57,10 @@
 //! ```
 
 use std::sync::Arc;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context as TaskContext, Poll};
 
 use anyhow::{anyhow, Context, Result};
 use log::{debug, error, info};
@@ -65,6 +68,29 @@ use tokio::task::JoinHandle;
 
 use crate::mw75_client::Mw75Handle;
 use crate::protocol::RFCOMM_CHANNEL;
+
+/// Wrapper that asserts a future is `Send`.
+///
+/// # Safety
+///
+/// WinRT COM objects created in an MTA (multi-threaded apartment) are safe to
+/// access from any thread.  The `windows` crate does not mark every generated
+/// type as `Send` (notably collection views like `IVectorView`), but the
+/// underlying COM pointers *are* thread-safe when MTA is in use.  Because
+/// `tokio` initialises MTA on Windows, this wrapper is sound for our use case.
+struct AssertSend<F>(F);
+
+// SAFETY: see doc-comment above.
+unsafe impl<F: Future> Send for AssertSend<F> {}
+
+impl<F: Future> Future for AssertSend<F> {
+    type Output = F::Output;
+    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
+        // SAFETY: we only project to the inner future and never move it.
+        let inner = unsafe { self.map_unchecked_mut(|s| &mut s.0) };
+        inner.poll(cx)
+    }
+}
 
 /// RFCOMM connection timeout in seconds.
 #[cfg(target_os = "linux")]
@@ -120,7 +146,7 @@ pub async fn start_rfcomm_stream(
     // Brief settle time for BLE disconnect to complete
     tokio::time::sleep(std::time::Duration::from_millis(BLE_SETTLE_MS)).await;
 
-    let task = tokio::spawn(async move {
+    let task = tokio::spawn(AssertSend(async move {
         match rfcomm_reader_loop(&handle, &address, &device_name, &shutdown_clone).await {
             Ok(()) => {
                 info!("RFCOMM stream ended normally");
@@ -137,7 +163,7 @@ pub async fn start_rfcomm_stream(
         } else {
             info!("RFCOMM: intentional shutdown — suppressing Disconnected event");
         }
-    });
+    }));
 
     Ok(RfcommHandle { task, shutdown })
 }
