@@ -736,28 +736,29 @@ async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, _device_name: &s
 
     info!("Windows RFCOMM: connecting to {address} (0x{bt_addr:012x})…");
 
-    // Get Bluetooth device (WinRT async → Rust future via IntoFuture)
-    let device = BluetoothDevice::FromBluetoothAddressAsync(bt_addr)?
-        .await
-        .context("Failed to find Bluetooth device")?;
+    // Resolve connection info inside a block so every non-Send COM object
+    // (`BluetoothDevice`, `RfcommDeviceServicesResult`, `IVectorView`,
+    // `RfcommDeviceService`) is dropped before the next `.await`, keeping
+    // the overall future `Send`-safe for `tokio::spawn`.
+    let (host, service_name) = {
+        let device = BluetoothDevice::FromBluetoothAddressAsync(bt_addr)?
+            .await
+            .context("Failed to find Bluetooth device")?;
 
-    info!("Windows: found Bluetooth device");
+        info!("Windows: found Bluetooth device");
 
-    // Get RFCOMM services
-    let rfcomm_services = device
-        .GetRfcommServicesAsync()?
-        .await
-        .context("Failed to get RFCOMM services")?;
+        let rfcomm_services = device
+            .GetRfcommServicesAsync()?
+            .await
+            .context("Failed to get RFCOMM services")?;
 
-    let services = rfcomm_services.Services()?;
-    if services.Size()? == 0 {
-        return Err(anyhow!("No RFCOMM services found on device {address}"));
-    }
-
-    // Find the Serial Port Profile service or use the first one
-    let service = services.GetAt(0)?;
-    let host = service.ConnectionHostName()?;
-    let service_name = service.ConnectionServiceName()?;
+        let services = rfcomm_services.Services()?;
+        if services.Size()? == 0 {
+            return Err(anyhow!("No RFCOMM services found on device {address}"));
+        }
+        let service = services.GetAt(0)?;
+        (service.ConnectionHostName()?, service.ConnectionServiceName()?)
+    };
 
     info!(
         "Windows RFCOMM: connecting to service '{}'",
