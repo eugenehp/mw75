@@ -720,7 +720,6 @@ fn macos_ioreturn_name(code: u32) -> &'static str {
 
 #[cfg(target_os = "windows")]
 async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, _device_name: &str, _shutdown: &AtomicBool) -> Result<()> {
-    use windows::Devices::Bluetooth::Rfcomm::RfcommDeviceService;
     use windows::Devices::Bluetooth::BluetoothDevice;
     use windows::Networking::Sockets::StreamSocket;
     use windows::Storage::Streams::{DataReader, InputStreamOptions};
@@ -737,27 +736,18 @@ async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, _device_name: &s
 
     info!("Windows RFCOMM: connecting to {address} (0x{bt_addr:012x})…");
 
-    // Get Bluetooth device
-    let device = tokio::task::spawn_blocking(move || -> Result<BluetoothDevice> {
-        let op = BluetoothDevice::FromBluetoothAddressAsync(bt_addr)?;
-        let device = op.get()?;
-        Ok(device)
-    })
-    .await
-    .context("Bluetooth device lookup panicked")?
-    .context("Failed to find Bluetooth device")?;
+    // Get Bluetooth device (WinRT async → Rust future via IntoFuture)
+    let device = BluetoothDevice::FromBluetoothAddressAsync(bt_addr)?
+        .await
+        .context("Failed to find Bluetooth device")?;
 
     info!("Windows: found Bluetooth device");
 
     // Get RFCOMM services
-    let rfcomm_services = tokio::task::spawn_blocking(move || -> Result<_> {
-        let op = device.GetRfcommServicesAsync()?;
-        let result = op.get()?;
-        Ok(result)
-    })
-    .await
-    .context("RFCOMM service lookup panicked")?
-    .context("Failed to get RFCOMM services")?;
+    let rfcomm_services = device
+        .GetRfcommServicesAsync()?
+        .await
+        .context("Failed to get RFCOMM services")?;
 
     let services = rfcomm_services.Services()?;
     if services.Size()? == 0 {
@@ -776,15 +766,10 @@ async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, _device_name: &s
 
     // Connect StreamSocket
     let socket = StreamSocket::new()?;
-
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let op = socket.ConnectAsync(&host, &service_name)?;
-        op.get()?;
-        Ok(())
-    })
-    .await
-    .context("RFCOMM socket connect panicked")?
-    .context("RFCOMM socket connect failed")?;
+    socket
+        .ConnectAsync(&host, &service_name)?
+        .await
+        .context("RFCOMM socket connect failed")?;
 
     info!("Windows RFCOMM: connected to {address}");
 
@@ -796,38 +781,23 @@ async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, _device_name: &s
     let mut total_bytes: u64 = 0;
 
     loop {
-        // Read data
-        let result = tokio::task::spawn_blocking({
-            let reader = reader.clone();
-            move || -> Result<Vec<u8>> {
-                let op = reader.LoadAsync(READ_BUF_SIZE as u32)?;
-                let bytes_read = op.get()?;
-                if bytes_read == 0 {
-                    return Ok(Vec::new());
-                }
-                let mut buf = vec![0u8; bytes_read as usize];
-                reader.ReadBytes(&mut buf)?;
-                Ok(buf)
-            }
-        })
-        .await;
+        // Read data (WinRT LoadAsync → future)
+        let bytes_read = reader.LoadAsync(READ_BUF_SIZE as u32)?.await;
 
-        match result {
-            Ok(Ok(data)) if data.is_empty() => {
+        match bytes_read {
+            Ok(0) => {
                 info!("Windows RFCOMM: connection closed (EOF)");
                 break;
             }
-            Ok(Ok(data)) => {
-                total_bytes += data.len() as u64;
-                debug!("Windows RFCOMM: read {} bytes (total: {total_bytes})", data.len());
-                handle.feed_data(&data).await;
-            }
-            Ok(Err(e)) => {
-                error!("Windows RFCOMM: read error: {e}");
-                break;
+            Ok(n) => {
+                let mut buf = vec![0u8; n as usize];
+                reader.ReadBytes(&mut buf)?;
+                total_bytes += buf.len() as u64;
+                debug!("Windows RFCOMM: read {} bytes (total: {total_bytes})", buf.len());
+                handle.feed_data(&buf).await;
             }
             Err(e) => {
-                error!("Windows RFCOMM: read task panicked: {e}");
+                error!("Windows RFCOMM: read error: {e}");
                 break;
             }
         }
