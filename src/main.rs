@@ -6,14 +6,14 @@ use log::info;
 use tokio::sync::mpsc;
 
 use mw75::mw75_client::{Mw75Client, Mw75ClientConfig};
-use mw75::protocol::{EEG_CHANNEL_NAMES, SampleRate};
+use mw75::protocol::{SampleRate, EEG_CHANNEL_NAMES};
 use mw75::types::Mw75Event;
 
 /// Delay before attempting to reconnect after a disconnect.
 const RECONNECT_DELAY_SECS: u64 = 3;
 
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    mw75::logging::init("info");
 
     // On macOS, CoreBluetooth (btleplug) and IOBluetooth (RFCOMM) both need
     // the main thread's NSRunLoop to be pumped. We run the tokio async work
@@ -118,32 +118,27 @@ async fn async_main() -> Result<()> {
     std::thread::spawn(move || {
         let stdin = io::stdin();
         let mut buf = [0u8; 1];
-        loop {
-            match stdin.lock().read(&mut buf) {
-                Ok(1) => {
-                    let ch = buf[0] as char;
-                    // Handle quit immediately in the stdin thread —
-                    // this works even if the event loop is blocked
-                    // awaiting a BLE operation.
-                    if ch == 'q' || ch == 'Q' {
-                        eprintln!("\nQuit requested — exiting.");
-                        // Restore terminal before exit
-                        #[cfg(unix)]
-                        unsafe {
-                            let mut orig = std::mem::MaybeUninit::<libc::termios>::uninit();
-                            if libc::tcgetattr(libc::STDIN_FILENO, orig.as_mut_ptr()) == 0 {
-                                let mut t = orig.assume_init();
-                                t.c_lflag |= libc::ICANON | libc::ECHO;
-                                libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &t);
-                            }
-                        }
-                        std::process::exit(0);
-                    }
-                    if key_tx.send(ch).is_err() {
-                        break;
+        while let Ok(1) = stdin.lock().read(&mut buf) {
+            let ch = buf[0] as char;
+            // Handle quit immediately in the stdin thread —
+            // this works even if the event loop is blocked
+            // awaiting a BLE operation.
+            if ch == 'q' || ch == 'Q' {
+                eprintln!("\nQuit requested — exiting.");
+                // Restore terminal before exit
+                #[cfg(unix)]
+                unsafe {
+                    let mut orig = std::mem::MaybeUninit::<libc::termios>::uninit();
+                    if libc::tcgetattr(libc::STDIN_FILENO, orig.as_mut_ptr()) == 0 {
+                        let mut t = orig.assume_init();
+                        t.c_lflag |= libc::ICANON | libc::ECHO;
+                        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &t);
                     }
                 }
-                Ok(_) | Err(_) => break,
+                std::process::exit(0);
+            }
+            if key_tx.send(ch).is_err() {
+                break;
             }
         }
     });
@@ -164,9 +159,7 @@ async fn async_main() -> Result<()> {
                 tokio::time::sleep(std::time::Duration::from_secs(RECONNECT_DELAY_SECS)).await;
             }
             Err(e) => {
-                info!(
-                    "Connection failed: {e:#} — retrying in {RECONNECT_DELAY_SECS} s …"
-                );
+                info!("Connection failed: {e:#} — retrying in {RECONNECT_DELAY_SECS} s …");
                 tokio::time::sleep(std::time::Duration::from_secs(RECONNECT_DELAY_SECS)).await;
             }
         }
@@ -236,8 +229,10 @@ async fn connect_and_run(
     };
 
     #[cfg(not(feature = "rfcomm"))]
-    info!("RFCOMM feature not enabled — EEG data requires RFCOMM.\n\
-           Run with: cargo run --bin mw75 --features rfcomm");
+    info!(
+        "RFCOMM feature not enabled — EEG data requires RFCOMM.\n\
+           Run with: cargo run --bin mw75 --features rfcomm"
+    );
 
     info!("Commands: q = quit, s = stats, p = pause/resume EEG  (no Enter needed)\n");
 

@@ -32,9 +32,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::protocol::{
-    EEG_EVENT_ID, EEG_SCALING_FACTOR, NUM_EEG_CHANNELS, PACKET_SIZE, SYNC_BYTE,
-};
+use crate::protocol::{EEG_EVENT_ID, EEG_SCALING_FACTOR, NUM_EEG_CHANNELS, PACKET_SIZE, SYNC_BYTE};
 use crate::types::{ChecksumStats, EegPacket, Mw75Event};
 
 // ── Timestamp helper ──────────────────────────────────────────────────────────
@@ -78,7 +76,7 @@ pub fn validate_checksum(packet: &[u8]) -> (bool, u16, u16) {
     if packet.len() < PACKET_SIZE {
         return (false, 0, 0);
     }
-    let calculated: u16 = packet[..61].iter().map(|&b| b as u16).sum::<u16>() & 0xFFFF;
+    let calculated: u16 = packet[..61].iter().map(|&b| b as u16).sum::<u16>();
     let received: u16 = packet[61] as u16 | ((packet[62] as u16) << 8);
     (calculated == received, calculated, received)
 }
@@ -345,7 +343,7 @@ mod tests {
 
     /// Recalculate and store the checksum in-place.
     fn fix_checksum(pkt: &mut [u8]) {
-        let sum: u16 = pkt[..61].iter().map(|&b| b as u16).sum::<u16>() & 0xFFFF;
+        let sum: u16 = pkt[..61].iter().map(|&b| b as u16).sum::<u16>();
         pkt[61] = (sum & 0xFF) as u8;
         pkt[62] = (sum >> 8) as u8;
     }
@@ -462,7 +460,10 @@ mod tests {
         let eeg = parse_eeg_packet(&pkt).unwrap();
         for &ch in &eeg.channels {
             let expected = -5000.0 * EEG_SCALING_FACTOR;
-            assert!((ch - expected).abs() < 0.1, "Expected ~{expected}, got {ch}");
+            assert!(
+                (ch - expected).abs() < 0.1,
+                "Expected ~{expected}, got {ch}"
+            );
         }
     }
 
@@ -582,7 +583,11 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(
             &events[0],
-            Mw75Event::OtherEvent { event_id: 100, counter: 7, .. }
+            Mw75Event::OtherEvent {
+                event_id: 100,
+                counter: 7,
+                ..
+            }
         ));
     }
 

@@ -1,3 +1,9 @@
 .DS_Store
 /target
 .gitrub_activity
+
+# Build artifacts (produced by macos/make-app.sh — not source)
+/build
+
+# Runtime logs (e.g. mw75-tui.log, MW75_LOG_FILE targets)
+*.log

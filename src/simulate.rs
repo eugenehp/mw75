@@ -16,7 +16,7 @@
 
 use rand::Rng;
 
-use crate::protocol::{EEG_EVENT_ID, NUM_EEG_CHANNELS, PACKET_SIZE, SYNC_BYTE, SampleRate};
+use crate::protocol::{SampleRate, EEG_EVENT_ID, NUM_EEG_CHANNELS, PACKET_SIZE, SYNC_BYTE};
 
 /// Build a complete 63-byte EEG packet with a valid checksum.
 ///
@@ -68,7 +68,7 @@ pub fn build_eeg_packet(counter: u8) -> Vec<u8> {
     packet[60] = 0x00;
 
     // Checksum: sum of bytes 0..61, masked to 16 bits, LE
-    let checksum: u16 = packet[..61].iter().map(|&b| b as u16).sum::<u16>() & 0xFFFF;
+    let checksum: u16 = packet[..61].iter().map(|&b| b as u16).sum::<u16>();
     packet[61] = (checksum & 0xFF) as u8;
     packet[62] = (checksum >> 8) as u8;
 
@@ -126,7 +126,7 @@ pub fn build_sim_packet(counter: u8, t: f64) -> Vec<u8> {
 
     packet[60] = 0x00;
 
-    let checksum: u16 = packet[..61].iter().map(|&b| b as u16).sum::<u16>() & 0xFFFF;
+    let checksum: u16 = packet[..61].iter().map(|&b| b as u16).sum::<u16>();
     packet[61] = (checksum & 0xFF) as u8;
     packet[62] = (checksum >> 8) as u8;
 
@@ -320,12 +320,7 @@ mod tests {
         let deadline = tokio::time::Instant::now() + timeout;
 
         while tokio::time::Instant::now() < deadline {
-            match tokio::time::timeout(
-                tokio::time::Duration::from_millis(10),
-                rx.recv(),
-            )
-            .await
-            {
+            match tokio::time::timeout(tokio::time::Duration::from_millis(10), rx.recv()).await {
                 Ok(Some(crate::types::Mw75Event::Eeg(_))) => eeg_count += 1,
                 Ok(Some(_)) => {} // Connected, Activated, Battery
                 _ => break,

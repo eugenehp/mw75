@@ -54,11 +54,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
+#[cfg(target_os = "macos")]
+use btleplug::api::CentralState;
 use btleplug::api::{
     Central, CentralEvent, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType,
 };
-#[cfg(target_os = "macos")]
-use btleplug::api::CentralState;
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::StreamExt;
 use log::{debug, info, warn};
@@ -67,11 +67,11 @@ use uuid::Uuid;
 
 use crate::parse::PacketProcessor;
 use crate::protocol::{
-    BATTERY_CMD, BLE_BATTERY_COMMAND, BLE_COMMAND_DELAY_MS, BLE_DISCOVERY_TIMEOUT_SECS,
-    BLE_EEG_COMMAND, BLE_RAW_MODE_COMMAND, BLE_SUCCESS_CODE, BLE_UNKNOWN_E0_COMMAND,
-    DISABLE_EEG_CMD, DISABLE_RAW_MODE_CMD, ENABLE_EEG_CMD, ENABLE_RAW_MODE_CMD,
-    MW75_COMMAND_CHAR, MW75_DEVICE_NAME_PATTERN, MW75_SERVICE_UUID, MW75_STATUS_CHAR,
-    BLE_ACTIVATION_DELAY_MS, BLE_RFCOMM_STATUS_COMMAND, SampleRate,
+    SampleRate, BATTERY_CMD, BLE_ACTIVATION_DELAY_MS, BLE_BATTERY_COMMAND, BLE_COMMAND_DELAY_MS,
+    BLE_DISCOVERY_TIMEOUT_SECS, BLE_EEG_COMMAND, BLE_RAW_MODE_COMMAND, BLE_RFCOMM_STATUS_COMMAND,
+    BLE_SUCCESS_CODE, BLE_UNKNOWN_E0_COMMAND, DISABLE_EEG_CMD, DISABLE_RAW_MODE_CMD,
+    ENABLE_EEG_CMD, ENABLE_RAW_MODE_CMD, MW75_COMMAND_CHAR, MW75_DEVICE_NAME_PATTERN,
+    MW75_SERVICE_UUID, MW75_STATUS_CHAR,
 };
 use crate::types::{ActivationStatus, BatteryInfo, Mw75Event};
 
@@ -160,7 +160,10 @@ impl Mw75Client {
         #[cfg(target_os = "macos")]
         wait_for_adapter_ready(&adapter).await;
 
-        info!("scan_all: scanning for {} s …", self.config.scan_timeout_secs);
+        info!(
+            "scan_all: scanning for {} s …",
+            self.config.scan_timeout_secs
+        );
 
         // Use service UUID filter — on macOS CoreBluetooth this is required
         // to discover already-paired devices that are not actively advertising.
@@ -180,12 +183,10 @@ impl Mw75Client {
                 let id = p.id().to_string();
                 debug!("scan_all: saw peripheral: name={name:?}  id={id}");
 
-                let matched = (!name.is_empty()
-                    && name.to_uppercase().contains(&upper_pattern))
+                let matched = (!name.is_empty() && name.to_uppercase().contains(&upper_pattern))
                     || props.services.contains(&MW75_SERVICE_UUID)
                     || props.manufacturer_data.values().any(|data| {
-                        let upper: Vec<u8> =
-                            data.iter().map(|b| b.to_ascii_uppercase()).collect();
+                        let upper: Vec<u8> = data.iter().map(|b| b.to_ascii_uppercase()).collect();
                         upper
                             .windows(pattern_bytes.len())
                             .any(|w| w == pattern_bytes)
@@ -332,15 +333,25 @@ impl Mw75Client {
         info!(
             "Subscribed to {} characteristic(s): {}",
             subscribed_chars.len(),
-            subscribed_chars.iter().map(|u| {
-                let s = u.to_string();
-                // Short label for known chars
-                if s.contains("1102") { "STATUS".to_string() }
-                else if s.contains("1103") { "DATA_1103".to_string() }
-                else if s.contains("1105") { "STATUS_ALT".to_string() }
-                else if s.contains("1106") { "DATA_1106".to_string() }
-                else { s[..8].to_string() }
-            }).collect::<Vec<_>>().join(", ")
+            subscribed_chars
+                .iter()
+                .map(|u| {
+                    let s = u.to_string();
+                    // Short label for known chars
+                    if s.contains("1102") {
+                        "STATUS".to_string()
+                    } else if s.contains("1103") {
+                        "DATA_1103".to_string()
+                    } else if s.contains("1105") {
+                        "STATUS_ALT".to_string()
+                    } else if s.contains("1106") {
+                        "DATA_1106".to_string()
+                    } else {
+                        s[..8].to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
         );
 
         // Event channel
@@ -396,7 +407,8 @@ impl Mw75Client {
             info!("BLE notification stream active, waiting for data…");
 
             let mut notif_count: u64 = 0;
-            let mut notif_counts_by_char: std::collections::HashMap<Uuid, u64> = std::collections::HashMap::new();
+            let mut notif_counts_by_char: std::collections::HashMap<Uuid, u64> =
+                std::collections::HashMap::new();
 
             while let Some(notif) = notifications.next().await {
                 let data = &notif.value;
@@ -406,32 +418,50 @@ impl Mw75Client {
 
                 // Build hex string for logging
                 let hex_str: String = if data.len() <= 64 {
-                    data.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
+                    data.iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 } else {
-                    let head: String = data[..32].iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+                    let head: String = data[..32]
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     format!("{head} … ({} bytes total)", data.len())
                 };
 
                 // Determine characteristic label
                 let char_short = match notif.uuid {
                     u if u == status_char_uuid => "STATUS_1102",
-                    u if u == Uuid::from_u128(0x00001103_d102_11e1_9b23_00025b00a5a5) => "DATA_1103",
-                    u if u == Uuid::from_u128(0x00001105_d102_11e1_9b23_00025b00a5a6) => "STATUS_1105",
-                    u if u == Uuid::from_u128(0x00001106_d102_11e1_9b23_00025b00a5a6) => "DATA_1106",
+                    u if u == Uuid::from_u128(0x00001103_d102_11e1_9b23_00025b00a5a5) => {
+                        "DATA_1103"
+                    }
+                    u if u == Uuid::from_u128(0x00001105_d102_11e1_9b23_00025b00a5a6) => {
+                        "STATUS_1105"
+                    }
+                    u if u == Uuid::from_u128(0x00001106_d102_11e1_9b23_00025b00a5a6) => {
+                        "DATA_1106"
+                    }
                     _ => "OTHER",
                 };
 
                 // Log first 50 notifications per characteristic at info level,
                 // then switch to debug to avoid flooding
                 if *char_count <= 50 {
-                    info!("📨 {char_short} #{char_count} ({} B): {hex_str}", data.len());
+                    info!(
+                        "📨 {char_short} #{char_count} ({} B): {hex_str}",
+                        data.len()
+                    );
                 } else if *char_count == 51 {
                     info!("📨 {char_short} — suppressing further raw logs (received 50+)");
                 }
 
                 // Status characteristic: parse command responses
-                if notif.uuid == status_char_uuid && data.len() >= 5
-                    && data[0] == 0x09 && data[1] == 0x9A
+                if notif.uuid == status_char_uuid
+                    && data.len() >= 5
+                    && data[0] == 0x09
+                    && data[1] == 0x9A
                 {
                     let cmd_type = data[3];
                     let status = data[4];
@@ -482,7 +512,11 @@ impl Mw75Client {
                     proc.process_data(data)
                 };
                 if !events.is_empty() {
-                    info!("✅ Parsed {} EEG packet(s) from {char_short} ({} bytes)", events.len(), data.len());
+                    info!(
+                        "✅ Parsed {} EEG packet(s) from {char_short} ({} bytes)",
+                        events.len(),
+                        data.len()
+                    );
                     for event in events {
                         let _ = notification_tx.send(event).await;
                     }
@@ -490,8 +524,12 @@ impl Mw75Client {
                     // Show first byte analysis for non-parsed data
                     let first = data[0];
                     let annotation = if first == 0xAA {
-                        format!("sync=0xAA event_id={} len={} counter={}", 
-                            data.get(1).unwrap_or(&0), data.get(2).unwrap_or(&0), data.get(3).unwrap_or(&0))
+                        format!(
+                            "sync=0xAA event_id={} len={} counter={}",
+                            data.get(1).unwrap_or(&0),
+                            data.get(2).unwrap_or(&0),
+                            data.get(3).unwrap_or(&0)
+                        )
                     } else {
                         format!("first_byte=0x{first:02x} (not 0xAA sync)")
                     };
@@ -499,19 +537,33 @@ impl Mw75Client {
                 }
 
                 // Periodic summary every 100 notifications
-                if notif_count % 100 == 0 {
-                    let summary: String = notif_counts_by_char.iter()
+                if notif_count.is_multiple_of(100) {
+                    let summary: String = notif_counts_by_char
+                        .iter()
                         .map(|(uuid, count)| {
                             let lbl = match *uuid {
                                 u if u == status_char_uuid => "STATUS_1102",
-                                u if u == Uuid::from_u128(0x00001103_d102_11e1_9b23_00025b00a5a5) => "DATA_1103",
-                                u if u == Uuid::from_u128(0x00001105_d102_11e1_9b23_00025b00a5a6) => "STATUS_1105",
-                                u if u == Uuid::from_u128(0x00001106_d102_11e1_9b23_00025b00a5a6) => "DATA_1106",
+                                u if u
+                                    == Uuid::from_u128(0x00001103_d102_11e1_9b23_00025b00a5a5) =>
+                                {
+                                    "DATA_1103"
+                                }
+                                u if u
+                                    == Uuid::from_u128(0x00001105_d102_11e1_9b23_00025b00a5a6) =>
+                                {
+                                    "STATUS_1105"
+                                }
+                                u if u
+                                    == Uuid::from_u128(0x00001106_d102_11e1_9b23_00025b00a5a6) =>
+                                {
+                                    "DATA_1106"
+                                }
                                 _ => "OTHER",
                             };
                             format!("{lbl}={count}")
                         })
-                        .collect::<Vec<_>>().join(", ");
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     info!("📊 Notification total: {notif_count} — {summary}");
                 }
             }
@@ -601,7 +653,7 @@ impl Mw75Client {
                         }
 
                         // Match 3: manufacturer data contains pattern as ASCII
-                        for (_company_id, data) in mfg_data {
+                        for data in mfg_data.values() {
                             let upper_data: Vec<u8> =
                                 data.iter().map(|b| b.to_ascii_uppercase()).collect();
                             if upper_data
@@ -630,9 +682,7 @@ impl Mw75Client {
             );
         }
 
-        result.map_err(|_| {
-            anyhow!("Timed out scanning for an MW75 device after {timeout_secs} s")
-        })
+        result.map_err(|_| anyhow!("Timed out scanning for an MW75 device after {timeout_secs} s"))
     }
 }
 
@@ -720,7 +770,9 @@ impl Mw75Handle {
             .map_err(|_| anyhow!("discover_services() timed out after 10 s"))??;
 
         // Find the command characteristic (handle may have changed)
-        let command_char = self.peripheral.characteristics()
+        let command_char = self
+            .peripheral
+            .characteristics()
             .iter()
             .find(|c| c.uuid == MW75_COMMAND_CHAR)
             .cloned()
@@ -761,7 +813,10 @@ impl Mw75Handle {
         let connected = self.peripheral.is_connected().await.unwrap_or(false);
         let raw_mode = self.sample_rate.needs_raw_mode();
 
-        info!("Activation: sample_rate={}, raw_mode={}", self.sample_rate, raw_mode);
+        info!(
+            "Activation: sample_rate={}, raw_mode={}",
+            self.sample_rate, raw_mode
+        );
 
         if !connected {
             // Batch all commands via a single BLE reconnect cycle

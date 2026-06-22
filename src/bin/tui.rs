@@ -41,7 +41,7 @@ use ratatui::{
 };
 
 use mw75::mw75_client::{Mw75Client, Mw75ClientConfig};
-use mw75::protocol::{EEG_CHANNEL_NAMES, NUM_EEG_CHANNELS, SampleRate};
+use mw75::protocol::{SampleRate, EEG_CHANNEL_NAMES, NUM_EEG_CHANNELS};
 use mw75::simulate::spawn_simulator_with_rate;
 use mw75::types::Mw75Event;
 
@@ -49,7 +49,9 @@ use mw75::types::Mw75Event;
 
 const WINDOW_SECS: f64 = 2.0;
 
-const Y_SCALES: &[f64] = &[10.0, 25.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0];
+const Y_SCALES: &[f64] = &[
+    10.0, 25.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0,
+];
 const DEFAULT_SCALE: usize = 4;
 
 /// 12 distinct colours for channels.
@@ -134,7 +136,9 @@ enum DataCmd {
 #[derive(Clone)]
 enum AppMode {
     Scanning,
-    Connected { name: String },
+    Connected {
+        name: String,
+    },
     Simulated,
     Disconnected,
     /// RFCOMM is reconnecting after a resume.
@@ -405,16 +409,10 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         AppMode::Connected { name } => (format!("● {name}"), Color::Green),
         AppMode::Simulated => ("◆ Simulated".to_owned(), Color::Cyan),
         AppMode::Disconnected => (format!("{} Disconnected", spinner_str()), Color::Red),
-        AppMode::Reconnecting => (
-            format!("{} Reconnecting…", spinner_str()),
-            Color::Yellow,
-        ),
+        AppMode::Reconnecting => (format!("{} Reconnecting…", spinner_str()), Color::Yellow),
     };
 
-    let bat = app
-        .battery
-        .map(|b| format!("🔋{b}%"))
-        .unwrap_or_default();
+    let bat = app.battery.map(|b| format!("🔋{b}%")).unwrap_or_default();
     let waiting_for_data = !app.eeg_paused
         && matches!(app.mode, AppMode::Connected { .. } | AppMode::Reconnecting)
         && app.pkt_rate() < 1.0;
@@ -423,7 +421,11 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         format!("{:.0}Hz", app.pkt_rate())
     };
-    let rate_color = if waiting_for_data { Color::Yellow } else { Color::White };
+    let rate_color = if waiting_for_data {
+        Color::Yellow
+    } else {
+        Color::White
+    };
     let scale = format!("±{:.0}µV", app.y_range());
     let total = format!("{}K", app.total_samples / 1_000);
     let dropped = if app.dropped_packets > 0 {
@@ -504,7 +506,11 @@ fn draw_channel(frame: &mut Frame, area: Rect, ch: usize, data: &[(f64, f64)], a
     };
 
     let clipping = max_v > y_range || min_v < -y_range;
-    let border_color = if clipping { Color::Red } else { Color::DarkGray };
+    let border_color = if clipping {
+        Color::Red
+    } else {
+        Color::DarkGray
+    };
     let clip_tag = if clipping { " CLIP" } else { "" };
 
     let title = format!(" {name} rms:{rms_v:.0}{clip_tag} ");
@@ -564,9 +570,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     let pause_label = if app.eeg_paused {
         Span::styled(
             " ⏸PAUSED ",
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )
     } else {
         Span::raw("")
@@ -632,7 +636,11 @@ fn draw_device_picker(frame: &mut Frame, area: Rect, app: &mut App) {
             let style = if app.picker.list_state.selected() == Some(i) {
                 Style::default()
                     .fg(Color::Black)
-                    .bg(if is_connected { Color::Green } else { Color::Cyan })
+                    .bg(if is_connected {
+                        Color::Green
+                    } else {
+                        Color::Cyan
+                    })
                     .add_modifier(Modifier::BOLD)
             } else if is_connected {
                 Style::default().fg(Color::Green)
@@ -677,15 +685,12 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    // Log to file (TUI owns the terminal)
-    {
-        use std::fs::File;
-        if let Ok(file) = File::create("mw75-tui.log") {
-            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-                .target(env_logger::Target::Pipe(Box::new(file)))
-                .init();
-        }
-    }
+    // The TUI owns the terminal, so logs default to a file. MW75_LOG_FILE
+    // (and MW75_LOG / RUST_LOG for the level) still override this.
+    mw75::logging::init_with(
+        "info",
+        mw75::logging::LogTarget::File("mw75-tui.log".into()),
+    );
 
     let simulate = std::env::args().any(|a| a == "--simulate");
     let sample_rate = if std::env::args().any(|a| a == "--256hz" || a == "--256") {
@@ -782,8 +787,7 @@ fn main() -> Result<()> {
                             s.picker.devices.get(i).map(|d| d.name.clone())
                         };
                         if let Some(name) = name {
-                            app.lock().unwrap().picker.status =
-                                PickerStatus::Connecting(name);
+                            app.lock().unwrap().picker.status = PickerStatus::Connecting(name);
                             let _ = cmd_tx.send(DataCmd::ConnectDevice(i));
                         }
                     }
@@ -986,14 +990,10 @@ async fn run_hardware_source(
                     }
                     Some(DataCmd::ConnectDevice(idx)) => {
                         // Try to connect to the selected device
-                        if let Some(result) =
-                            handle_connect_device(&app, sample_rate, idx).await
-                        {
+                        if let Some(result) = handle_connect_device(&app, sample_rate, idx).await {
                             let (drx, handle) = result;
-                            run_connected_session(
-                                &app, cmd_rx, &tx, rx, drx, handle, sample_rate,
-                            )
-                            .await;
+                            run_connected_session(&app, cmd_rx, &tx, rx, drx, handle, sample_rate)
+                                .await;
                             // After session ends, loop back to wait for commands
                             continue;
                         }
@@ -1018,7 +1018,10 @@ async fn handle_connect_device(
     app: &Arc<Mutex<App>>,
     sample_rate: SampleRate,
     idx: usize,
-) -> Option<(tokio::sync::mpsc::Receiver<Mw75Event>, mw75::mw75_client::Mw75Handle)> {
+) -> Option<(
+    tokio::sync::mpsc::Receiver<Mw75Event>,
+    mw75::mw75_client::Mw75Handle,
+)> {
     // We need to re-scan to get the actual Mw75Device (with peripheral handle).
     // The picker only stores name/id.
     let target_id = {

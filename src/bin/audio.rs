@@ -21,7 +21,7 @@ use mw75::audio::{AudioConfig, Mw75Audio};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    mw75::logging::init("info");
 
     let args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -35,12 +35,10 @@ async fn main() -> Result<()> {
             "--volume" | "-v" => {
                 i += 1;
                 if i < args.len() {
-                    volume = args[i]
-                        .parse()
-                        .unwrap_or_else(|_| {
-                            eprintln!("Invalid volume '{}', using 0.8", args[i]);
-                            0.8
-                        });
+                    volume = args[i].parse().unwrap_or_else(|_| {
+                        eprintln!("Invalid volume '{}', using 0.8", args[i]);
+                        0.8
+                    });
                 }
             }
             "--help" | "-h" => {

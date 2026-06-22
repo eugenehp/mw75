@@ -478,49 +478,41 @@ pub fn build_gaia_command_bytes(command: GaiaCommand, payload: &[u8]) -> Vec<u8>
 ///
 /// Used as a scan filter to identify MW75 headphones among nearby BLE peripherals.
 /// Part of the vendor namespace `000011XX-d102-11e1-9b23-00025b00a5a5`.
-pub const MW75_SERVICE_UUID: Uuid =
-    Uuid::from_u128(0x00001100_d102_11e1_9b23_00025b00a5a5);
+pub const MW75_SERVICE_UUID: Uuid = Uuid::from_u128(0x00001100_d102_11e1_9b23_00025b00a5a5);
 
 /// Command characteristic — the host writes activation commands here.
 ///
 /// Commands are fixed-length byte sequences (typically 5 bytes) that control
 /// EEG mode, raw mode, and battery queries.
-pub const MW75_COMMAND_CHAR: Uuid =
-    Uuid::from_u128(0x00001101_d102_11e1_9b23_00025b00a5a5);
+pub const MW75_COMMAND_CHAR: Uuid = Uuid::from_u128(0x00001101_d102_11e1_9b23_00025b00a5a5);
 
 /// Status characteristic — the device sends activation responses here.
 ///
 /// Subscribe to notifications on this characteristic to receive confirmation
 /// of command execution (EEG enabled, raw mode enabled, battery level, etc.).
-pub const MW75_STATUS_CHAR: Uuid =
-    Uuid::from_u128(0x00001102_d102_11e1_9b23_00025b00a5a5);
+pub const MW75_STATUS_CHAR: Uuid = Uuid::from_u128(0x00001102_d102_11e1_9b23_00025b00a5a5);
 
 /// Data characteristic — the device may stream EEG data here over BLE.
 ///
-pub const MW75_DATA_CHAR: Uuid =
-    Uuid::from_u128(0x00001103_d102_11e1_9b23_00025b00a5a5);
+pub const MW75_DATA_CHAR: Uuid = Uuid::from_u128(0x00001103_d102_11e1_9b23_00025b00a5a5);
 
 /// Secondary status characteristic (alternate namespace).
 ///
 /// Some firmware versions use this for status notifications.
-pub const MW75_STATUS_CHAR_ALT: Uuid =
-    Uuid::from_u128(0x00001105_d102_11e1_9b23_00025b00a5a6);
+pub const MW75_STATUS_CHAR_ALT: Uuid = Uuid::from_u128(0x00001105_d102_11e1_9b23_00025b00a5a6);
 
 /// Secondary data characteristic (alternate namespace).
-pub const MW75_DATA_CHAR_ALT: Uuid =
-    Uuid::from_u128(0x00001107_d102_11e1_9b23_00025b00a5a5);
+pub const MW75_DATA_CHAR_ALT: Uuid = Uuid::from_u128(0x00001107_d102_11e1_9b23_00025b00a5a5);
 
 /// SPP (Serial Port Profile) UUID for RFCOMM data streaming.
 ///
 /// Standard Bluetooth SPP UUID used as an alternative to the custom UUIDs.
-pub const SPP_UUID: Uuid =
-    Uuid::from_u128(0x00001101_0000_1000_8000_00805F9B34FB);
+pub const SPP_UUID: Uuid = Uuid::from_u128(0x00001101_0000_1000_8000_00805F9B34FB);
 
 /// Custom SPP UUID used by the MW75 Neuro for RFCOMM data streaming.
 ///
 /// Part of the vendor namespace `000011XX-D102-11E1-9B23-00025B00A5A5`.
-pub const MW75_SPP_UUID: Uuid =
-    Uuid::from_u128(0x00001101_d102_11e1_9b23_00025b00a5a5);
+pub const MW75_SPP_UUID: Uuid = Uuid::from_u128(0x00001101_d102_11e1_9b23_00025b00a5a5);
 
 // ── Pre-built BLE Command Sequences ─────────────────────────────────────────
 
@@ -557,14 +549,12 @@ pub const BATTERY_CMD: [u8; 5] = build_gaia_command(GaiaCommand::GetBatteryLevel
 /// Query ANC / World Volume state.
 ///
 /// Wire format: `[0x09, 0x9A, 0x03, 0x11, 0xFF]`
-pub const GET_WORLD_VOLUME_CMD: [u8; 5] =
-    build_gaia_command(GaiaCommand::WorldVolume, GAIA_QUERY);
+pub const GET_WORLD_VOLUME_CMD: [u8; 5] = build_gaia_command(GaiaCommand::WorldVolume, GAIA_QUERY);
 
 /// Query auto-off timer setting.
 ///
 /// Wire format: `[0x09, 0x9A, 0x03, 0x12, 0xFF]`
-pub const GET_AUTO_OFF_CMD: [u8; 5] =
-    build_gaia_command(GaiaCommand::AutoOff, GAIA_QUERY);
+pub const GET_AUTO_OFF_CMD: [u8; 5] = build_gaia_command(GaiaCommand::AutoOff, GAIA_QUERY);
 
 /// Query in-ear detection setting.
 ///
@@ -575,14 +565,12 @@ pub const GET_IN_EAR_DETECTION_CMD: [u8; 5] =
 /// Query find-device tone setting.
 ///
 /// Wire format: `[0x09, 0x9A, 0x03, 0x17, 0xFF]`
-pub const GET_FIND_DEVICE_CMD: [u8; 5] =
-    build_gaia_command(GaiaCommand::FindDevice, GAIA_QUERY);
+pub const GET_FIND_DEVICE_CMD: [u8; 5] = build_gaia_command(GaiaCommand::FindDevice, GAIA_QUERY);
 
 /// Query product ID.
 ///
 /// Wire format: `[0x09, 0x9A, 0x03, 0x10, 0xFF]`
-pub const GET_PRODUCT_ID_CMD: [u8; 5] =
-    build_gaia_command(GaiaCommand::ProductId, GAIA_QUERY);
+pub const GET_PRODUCT_ID_CMD: [u8; 5] = build_gaia_command(GaiaCommand::ProductId, GAIA_QUERY);
 
 /// Register for battery level notifications.
 ///
@@ -785,8 +773,7 @@ pub enum MdDeviceModel {
 
 /// EEG channel labels in packet order (Ch1–Ch12).
 pub const EEG_CHANNEL_NAMES: [&str; 12] = [
-    "Ch1", "Ch2", "Ch3", "Ch4", "Ch5", "Ch6",
-    "Ch7", "Ch8", "Ch9", "Ch10", "Ch11", "Ch12",
+    "Ch1", "Ch2", "Ch3", "Ch4", "Ch5", "Ch6", "Ch7", "Ch8", "Ch9", "Ch10", "Ch11", "Ch12",
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -846,7 +833,10 @@ mod tests {
     #[test]
     fn service_uuid_format() {
         let s = MW75_SERVICE_UUID.to_string();
-        assert!(s.contains("00001100"), "UUID should contain service base: {s}");
+        assert!(
+            s.contains("00001100"),
+            "UUID should contain service base: {s}"
+        );
     }
 
     #[test]
@@ -895,11 +885,26 @@ mod tests {
     #[test]
     fn build_command_matches_prebuilt() {
         // Verify all pre-built constants match the builder
-        assert_eq!(ENABLE_EEG_CMD, build_gaia_command(GaiaCommand::EegMode, 0x01));
-        assert_eq!(DISABLE_EEG_CMD, build_gaia_command(GaiaCommand::EegMode, 0x00));
-        assert_eq!(ENABLE_RAW_MODE_CMD, build_gaia_command(GaiaCommand::RawMode, 0x01));
-        assert_eq!(DISABLE_RAW_MODE_CMD, build_gaia_command(GaiaCommand::RawMode, 0x00));
-        assert_eq!(BATTERY_CMD, build_gaia_command(GaiaCommand::GetBatteryLevel, GAIA_QUERY));
+        assert_eq!(
+            ENABLE_EEG_CMD,
+            build_gaia_command(GaiaCommand::EegMode, 0x01)
+        );
+        assert_eq!(
+            DISABLE_EEG_CMD,
+            build_gaia_command(GaiaCommand::EegMode, 0x00)
+        );
+        assert_eq!(
+            ENABLE_RAW_MODE_CMD,
+            build_gaia_command(GaiaCommand::RawMode, 0x01)
+        );
+        assert_eq!(
+            DISABLE_RAW_MODE_CMD,
+            build_gaia_command(GaiaCommand::RawMode, 0x00)
+        );
+        assert_eq!(
+            BATTERY_CMD,
+            build_gaia_command(GaiaCommand::GetBatteryLevel, GAIA_QUERY)
+        );
     }
 
     #[test]
@@ -994,9 +999,15 @@ mod tests {
     #[test]
     fn gaia_command_from_byte_known() {
         assert_eq!(GaiaCommand::from_byte(0x11), Some(GaiaCommand::WorldVolume));
-        assert_eq!(GaiaCommand::from_byte(0x14), Some(GaiaCommand::GetBatteryLevel));
+        assert_eq!(
+            GaiaCommand::from_byte(0x14),
+            Some(GaiaCommand::GetBatteryLevel)
+        );
         assert_eq!(GaiaCommand::from_byte(0x60), Some(GaiaCommand::EegMode));
-        assert_eq!(GaiaCommand::from_byte(0x91), Some(GaiaCommand::VolumeButtonPress));
+        assert_eq!(
+            GaiaCommand::from_byte(0x91),
+            Some(GaiaCommand::VolumeButtonPress)
+        );
     }
 
     #[test]
@@ -1073,7 +1084,10 @@ mod tests {
         assert_eq!(GaiaAncMode::Off.to_string(), "Off");
         assert_eq!(GaiaAncMode::AncHigh.to_string(), "ANC High");
         assert_eq!(GaiaAncMode::AncAdaptive.to_string(), "ANC Adaptive");
-        assert_eq!(GaiaAncMode::AmbientAwareness.to_string(), "Ambient (Awareness)");
+        assert_eq!(
+            GaiaAncMode::AmbientAwareness.to_string(),
+            "Ambient (Awareness)"
+        );
     }
 
     // ── Auto-off tests ──────────────────────────────────────────────────────
@@ -1224,20 +1238,44 @@ mod tests {
         assert_eq!(gaia_payload::WV_OFF, gaia_response::WV_ALL_OFF);
         assert_eq!(gaia_payload::WV_ANC_HIGH, gaia_response::WV_ANC_HIGH);
         assert_eq!(gaia_payload::WV_ANC_LOW, gaia_response::WV_ANC_LOW);
-        assert_eq!(gaia_payload::WV_AMBIENT_VOICE, gaia_response::WV_AMBIENT_VOICE);
-        assert_eq!(gaia_payload::WV_AMBIENT_AWARENESS, gaia_response::WV_AMBIENT_AWARENESS);
-        assert_eq!(gaia_payload::WV_ANC_ADAPTIVE, gaia_response::WV_ANC_ADAPTIVE);
+        assert_eq!(
+            gaia_payload::WV_AMBIENT_VOICE,
+            gaia_response::WV_AMBIENT_VOICE
+        );
+        assert_eq!(
+            gaia_payload::WV_AMBIENT_AWARENESS,
+            gaia_response::WV_AMBIENT_AWARENESS
+        );
+        assert_eq!(
+            gaia_payload::WV_ANC_ADAPTIVE,
+            gaia_response::WV_ANC_ADAPTIVE
+        );
 
         assert_eq!(gaia_payload::AUTO_OFF_NEVER, gaia_response::AUTO_OFF_NEVER);
-        assert_eq!(gaia_payload::AUTO_OFF_30_MIN, gaia_response::AUTO_OFF_30_MIN);
-        assert_eq!(gaia_payload::AUTO_OFF_1_HOUR, gaia_response::AUTO_OFF_1_HOUR);
-        assert_eq!(gaia_payload::AUTO_OFF_3_HOURS, gaia_response::AUTO_OFF_3_HOURS);
+        assert_eq!(
+            gaia_payload::AUTO_OFF_30_MIN,
+            gaia_response::AUTO_OFF_30_MIN
+        );
+        assert_eq!(
+            gaia_payload::AUTO_OFF_1_HOUR,
+            gaia_response::AUTO_OFF_1_HOUR
+        );
+        assert_eq!(
+            gaia_payload::AUTO_OFF_3_HOURS,
+            gaia_response::AUTO_OFF_3_HOURS
+        );
 
         assert_eq!(gaia_payload::IN_EAR_DISABLE, gaia_response::IN_EAR_DISABLE);
         assert_eq!(gaia_payload::IN_EAR_ENABLE, gaia_response::IN_EAR_ENABLE);
 
-        assert_eq!(gaia_payload::FIND_TONE_DISABLE, gaia_response::FIND_TONE_DISABLE);
-        assert_eq!(gaia_payload::FIND_TONE_ENABLE, gaia_response::FIND_TONE_ENABLE);
+        assert_eq!(
+            gaia_payload::FIND_TONE_DISABLE,
+            gaia_response::FIND_TONE_DISABLE
+        );
+        assert_eq!(
+            gaia_payload::FIND_TONE_ENABLE,
+            gaia_response::FIND_TONE_ENABLE
+        );
     }
 
     // ── SampleRate tests ────────────────────────────────────────────────────
@@ -1282,7 +1320,11 @@ mod tests {
             GET_PRODUCT_ID_CMD,
             BATTERY_CMD,
         ] {
-            assert_eq!(cmd[4], GAIA_QUERY, "Query command {:02X} should use 0xFF", cmd[3]);
+            assert_eq!(
+                cmd[4], GAIA_QUERY,
+                "Query command {:02X} should use 0xFF",
+                cmd[3]
+            );
         }
     }
 }

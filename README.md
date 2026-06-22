@@ -43,7 +43,30 @@ Once paired, this library uses:
 - **BLE (GATT)** — for control commands (enable EEG, query battery, etc.)
 - **Bluetooth Classic (RFCOMM)** — for streaming EEG data at 500 Hz
 
-> **Note:** The headphones must be paired at the OS level first. BLE activation commands only work after the device is paired and connected as a standard Bluetooth audio device.
+> **Note:** The headphones must be paired at the OS level first. BLE activation
+> commands only work after the device is paired and connected as a standard
+> Bluetooth audio device.
+
+> **Discovery gotcha:** The MW75 only advertises over BLE while it has an
+> **active connection** (e.g. it's the current audio output). When idle it stops
+> advertising and a scan won't find it — if discovery times out, make sure the
+> headphones are connected and playing audio, then retry.
+
+### macOS: Bluetooth permission for RFCOMM
+
+On macOS (Sonoma/Sequoia and later) opening a Classic Bluetooth RFCOMM channel
+requires the **Bluetooth privacy permission**, which is only granted to a real
+`.app` bundle — a bare `cargo run` binary fails with
+`kIOReturnNotPermitted (0xe00002bc)`, even when ad-hoc signed. Build a signed
+bundle and launch it once so macOS records the grant:
+
+```bash
+./macos/make-app.sh mw75      # build + bundle + sign build/MW75.app
+open build/MW75.app           # first launch → click "Allow" on the prompt
+```
+
+BLE activation (CoreBluetooth) works without this; only RFCOMM streaming
+(IOBluetooth) needs the bundle. After approval the grant persists by bundle id.
 
 ## Quick start
 
@@ -51,7 +74,7 @@ Once paired, this library uses:
 
 ```toml
 [dependencies]
-mw75 = { version = "0.0.1", features = ["rfcomm"] }
+mw75 = { version = "0.0.7", features = ["rfcomm"] }
 ```
 
 ```rust
@@ -80,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    rfcomm.abort();
+    rfcomm.shutdown();
     Ok(())
 }
 ```
@@ -129,7 +152,7 @@ cargo build --features rfcomm,audio
 ┌──────────────────────────────────────────────────────────────┐
 │  RFCOMM Transport (rfcomm feature)                           │
 │  Linux: bluer::rfcomm::Stream                                │
-│  macOS: IOBluetoothDevice.openRFCOMMChannelSync              │
+│  macOS: IOBluetoothDevice.openRFCOMMChannelAsync             │
 │  Windows: StreamSocket + RfcommDeviceService                 │
 │                                                              │
 │  async read loop → Mw75Handle::feed_data()                   │
@@ -220,7 +243,7 @@ handle.disconnect_ble().await?;  // required before RFCOMM
 let task = start_rfcomm_stream(handle.clone(), "AA:BB:CC:DD:EE:FF").await?;
 
 // To stop:
-task.abort();
+task.shutdown();
 ```
 
 ### `parse`
@@ -328,13 +351,33 @@ The `mw75-tui` binary provides a real-time EEG waveform viewer:
 | `c` | Clear waveform buffers |
 | `q` / `Esc` | Quit |
 
+## Logging
+
+All binaries share one logging setup ([`mw75::logging`](src/logging.rs)),
+controlled entirely by environment variables — no recompile needed:
+
+| Variable | Effect |
+|----------|--------|
+| `MW75_LOG` | Level filter (e.g. `info`, `mw75=debug`, `off`). Takes precedence over `RUST_LOG`. |
+| `RUST_LOG` | Standard fallback level filter. |
+| `MW75_LOG_FILE` | Append logs to this file instead of stderr (works for any binary). |
+
+```bash
+MW75_LOG=mw75=debug cargo run --features rfcomm            # verbose to stderr
+MW75_LOG=warn MW75_LOG_FILE=/tmp/mw75.log cargo run --features rfcomm
+MW75_LOG=off cargo run --features rfcomm                   # silence logging
+```
+
+Library users can also redirect to an arbitrary sink (socket, buffer, …) via
+`mw75::logging::init_with(level, LogTarget::Pipe(writer))`.
+
 ## Testing
 
 ```bash
-# Run all tests (85 unit + 19 doc-tests)
-cargo test --all-features
+# Hardware-feature tests (110 unit + 19 doc-tests)
+cargo test --features rfcomm
 
-# Run tests without hardware-dependent features
+# Library-only tests (no Bluetooth backends)
 cargo test
 ```
 
@@ -352,12 +395,21 @@ mw75/
 │   ├── mw75_client.rs      # BLE scanning, connection, activation (btleplug)
 │   ├── rfcomm.rs           # RFCOMM transport: Linux/macOS/Windows (rfcomm feature)
 │   ├── simulate.rs         # Synthetic packet generator + 500 Hz simulator task
+│   ├── logging.rs          # Shared env-controlled logging (file/pipe redirect)
 │   ├── audio.rs            # A2DP audio: BlueZ + pactl + rodio (audio feature)
-│   ├── main.rs             # Headless CLI binary
+│   ├── main.rs             # Headless CLI binary (mw75)
 │   └── bin/
 │       ├── tui.rs          # Real-time EEG waveform TUI (tui feature)
-│       └── audio.rs        # Audio playback CLI binary (audio feature)
-└── audio.mp3               # Sample audio file for testing
+│       ├── audio.rs        # Audio playback CLI binary (audio feature)
+│       ├── ble_probe.rs    # BLE GATT enumeration / activation probe (rfcomm)
+│       ├── rfcomm_debug.rs # IOBluetooth SDP + RFCOMM connection diagnostics (rfcomm)
+│       └── rfcomm_probe.rs # RFCOMM data-streaming probe (rfcomm)
+├── examples/
+│   └── scan_dump.rs        # Dump every BLE peripheral seen during a scan
+└── macos/
+    ├── make-app.sh         # Build a signed .app bundle (Bluetooth TCC grant)
+    ├── entitlements.plist  # com.apple.security.device.bluetooth
+    └── Info.plist          # Bundle id + NSBluetoothAlwaysUsageDescription
 ```
 
 ## Credits

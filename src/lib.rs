@@ -71,7 +71,7 @@
 //!             println!("ch1={:.1} µV", pkt.channels[0]);
 //!         }
 //!     }
-//!     rfcomm.abort();
+//!     rfcomm.shutdown();
 //!     Ok(())
 //! }
 //! ```
@@ -147,6 +147,7 @@
 //! | Simulation | ✓ | ✓ | ✓ |
 //! | TUI | ✓ | ✓ | ✓ |
 
+pub mod logging;
 pub mod mw75_client;
 pub mod parse;
 pub mod protocol;
@@ -197,25 +198,23 @@ pub mod prelude {
     pub use crate::mw75_client::{Mw75Client, Mw75ClientConfig, Mw75Device, Mw75Handle};
 
     // ── Events and data types ─────────────────────────────────────────────────
-    pub use crate::types::{
-        ActivationStatus, BatteryInfo, ChecksumStats, EegPacket, Mw75Event,
-    };
+    pub use crate::types::{ActivationStatus, BatteryInfo, ChecksumStats, EegPacket, Mw75Event};
 
     // ── Protocol constants ────────────────────────────────────────────────────
     pub use crate::protocol::{
-        EEG_CHANNEL_NAMES, EEG_SCALING_FACTOR, NUM_EEG_CHANNELS, PACKET_SIZE, SYNC_BYTE,
-        SampleRate,
+        SampleRate, EEG_CHANNEL_NAMES, EEG_SCALING_FACTOR, NUM_EEG_CHANNELS, PACKET_SIZE, SYNC_BYTE,
     };
 
     // ── GAIA protocol ─────────────────────────────────────────────────────────
     pub use crate::protocol::{
-        build_gaia_command, parse_gaia_response,
-        GaiaAncMode, GaiaAutoOff, GaiaCommand, GaiaEqPreset, GaiaResponse,
-        GAIA_QUERY, GAIA_VENDOR_MD,
+        build_gaia_command, parse_gaia_response, GaiaAncMode, GaiaAutoOff, GaiaCommand,
+        GaiaEqPreset, GaiaResponse, GAIA_QUERY, GAIA_VENDOR_MD,
     };
 
     // ── Simulation ────────────────────────────────────────────────────────────
-    pub use crate::simulate::{build_eeg_packet, build_sim_packet, spawn_simulator, spawn_simulator_with_rate};
+    pub use crate::simulate::{
+        build_eeg_packet, build_sim_packet, spawn_simulator, spawn_simulator_with_rate,
+    };
 
     // ── RFCOMM transport ──────────────────────────────────────────────────────
     #[cfg(feature = "rfcomm")]

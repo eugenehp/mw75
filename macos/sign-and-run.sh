@@ -1,9 +1,11 @@
 #!/bin/bash
 # Build, sign with Bluetooth entitlements, and run the MW75 binary.
 #
-# macOS Sequoia+ requires signed binaries with the Bluetooth entitlement
-# to use Classic Bluetooth (IOBluetooth RFCOMM). Without signing,
-# openRFCOMMChannelSync returns kIOReturnNotPermitted (0xe00002bc).
+# NOTE: On macOS 15/26+ ad-hoc signing alone is NOT enough for IOBluetooth
+# RFCOMM — the Bluetooth TCC grant is only given to a real .app bundle, so a
+# signed bare binary still returns kIOReturnNotPermitted (0xe00002bc). For
+# RFCOMM streaming use ./macos/make-app.sh instead. This script remains useful
+# for BLE-only work and older macOS releases.
 #
 # Usage:
 #   ./macos/sign-and-run.sh                    # build + sign + run mw75

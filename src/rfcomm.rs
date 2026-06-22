@@ -13,6 +13,14 @@
 //! | macOS    | IOBluetooth framework via [`objc2-io-bluetooth`] | `rfcomm` |
 //! | Windows  | `Windows.Devices.Bluetooth.Rfcomm` via [`windows`] crate | `rfcomm` |
 //!
+//! # macOS permission
+//!
+//! On macOS (Sonoma/Sequoia+), IOBluetooth RFCOMM requires the Bluetooth
+//! privacy grant, which is only given to a real `.app` bundle — a bare binary
+//! fails with `kIOReturnNotPermitted (0xe00002bc)` even when ad-hoc signed.
+//! Use `macos/make-app.sh` to build a signed bundle and approve it once.
+//! BLE activation (CoreBluetooth) is unaffected; only RFCOMM needs this.
+//!
 //! # Architecture
 //!
 //! ```text
@@ -51,15 +59,15 @@
 //!     }
 //! }
 //!
-//! rfcomm_task.abort();
+//! rfcomm_task.shutdown();
 //! # Ok(())
 //! # }
 //! ```
 
-use std::sync::Arc;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
 
 use anyhow::{anyhow, Context, Result};
@@ -106,8 +114,6 @@ const READ_BUF_SIZE: usize = 1024;
 /// to release the BLE connection before RFCOMM can connect.
 const BLE_SETTLE_MS: u64 = 1000;
 
-
-
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// Connect to the MW75 device over RFCOMM and spawn an async reader task
@@ -132,10 +138,7 @@ const BLE_SETTLE_MS: u64 = 1000;
 /// connection drops (device powered off, out of range, etc.), in which
 /// case it sends
 /// [`Mw75Event::Disconnected`](crate::types::Mw75Event::Disconnected).
-pub async fn start_rfcomm_stream(
-    handle: Arc<Mw75Handle>,
-    address: &str,
-) -> Result<RfcommHandle> {
+pub async fn start_rfcomm_stream(handle: Arc<Mw75Handle>, address: &str) -> Result<RfcommHandle> {
     let address = address.to_string();
     let device_name = handle.device_name().to_string();
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -196,7 +199,9 @@ impl RfcommHandle {
 fn parse_mac(s: &str) -> Result<[u8; 6]> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() != 6 {
-        return Err(anyhow!("Invalid MAC address format: {s} (expected AA:BB:CC:DD:EE:FF)"));
+        return Err(anyhow!(
+            "Invalid MAC address format: {s} (expected AA:BB:CC:DD:EE:FF)"
+        ));
     }
     let mut bytes = [0u8; 6];
     for (i, part) in parts.iter().enumerate() {
@@ -211,12 +216,18 @@ fn parse_mac(s: &str) -> Result<[u8; 6]> {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(target_os = "linux")]
-async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, _device_name: &str, _shutdown: &AtomicBool) -> Result<()> {
+async fn rfcomm_reader_loop(
+    handle: &Mw75Handle,
+    address: &str,
+    _device_name: &str,
+    _shutdown: &AtomicBool,
+) -> Result<()> {
     use bluer::rfcomm::{SocketAddr, Stream};
     use bluer::Address;
     use tokio::io::AsyncReadExt;
 
-    let addr: Address = address.parse()
+    let addr: Address = address
+        .parse()
         .with_context(|| format!("Invalid Bluetooth address: {address}"))?;
 
     let sa = SocketAddr::new(addr, RFCOMM_CHANNEL);
@@ -272,7 +283,12 @@ async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, _device_name: &s
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(target_os = "macos")]
-async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, device_name: &str, shutdown: &AtomicBool) -> Result<()> {
+async fn rfcomm_reader_loop(
+    handle: &Mw75Handle,
+    address: &str,
+    device_name: &str,
+    shutdown: &AtomicBool,
+) -> Result<()> {
     use std::sync::mpsc as std_mpsc;
 
     let name_owned = device_name.to_string();
@@ -293,7 +309,13 @@ async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, device_name: &st
             // SAFETY: the AtomicBool lives in an Arc owned by RfcommHandle,
             // which outlives both the tokio task and this OS thread.
             let shutdown_ref = unsafe { &*(shutdown_ptr as *const AtomicBool) };
-            macos_rfcomm_thread(&name_owned, data_tx.clone(), status_tx, address_owned, shutdown_ref);
+            macos_rfcomm_thread(
+                &name_owned,
+                data_tx.clone(),
+                status_tx,
+                address_owned,
+                shutdown_ref,
+            );
         })
         .expect("failed to spawn RFCOMM thread");
 
@@ -306,7 +328,9 @@ async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, device_name: &st
             return Err(e);
         }
         None => {
-            return Err(anyhow!("macOS RFCOMM: connection thread exited unexpectedly"));
+            return Err(anyhow!(
+                "macOS RFCOMM: connection thread exited unexpectedly"
+            ));
         }
     }
 
@@ -320,7 +344,10 @@ async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, device_name: &st
                     break;
                 }
                 total_bytes += data.len() as u64;
-                debug!("macOS RFCOMM: received {} bytes (total: {total_bytes})", data.len());
+                debug!(
+                    "macOS RFCOMM: received {} bytes (total: {total_bytes})",
+                    data.len()
+                );
                 handle.feed_data(&data).await;
             }
             Err(std_mpsc::TryRecvError::Empty) => {
@@ -495,8 +522,12 @@ fn macos_rfcomm_thread(
             if let Ok(mac_bytes) = parse_mac(&address) {
                 let addr_str = format!(
                     "{:02X}-{:02X}-{:02X}-{:02X}-{:02X}-{:02X}",
-                    mac_bytes[0], mac_bytes[1], mac_bytes[2],
-                    mac_bytes[3], mac_bytes[4], mac_bytes[5]
+                    mac_bytes[0],
+                    mac_bytes[1],
+                    mac_bytes[2],
+                    mac_bytes[3],
+                    mac_bytes[4],
+                    mac_bytes[5]
                 );
                 let ns_addr = NSString::from_str(&addr_str);
                 let dev: Option<Retained<IOBluetoothDevice>> = unsafe {
@@ -547,7 +578,10 @@ fn macos_rfcomm_thread(
         for _ in 0..20 {
             std::thread::sleep(std::time::Duration::from_millis(250));
             let c: bool = unsafe { msg_send![&*device, isConnected] };
-            if c { info!("macOS: baseband connected"); break; }
+            if c {
+                info!("macOS: baseband connected");
+                break;
+            }
         }
     }
 
@@ -567,15 +601,29 @@ fn macos_rfcomm_thread(
             for i in 0..count {
                 let rec: *const AnyObject = msg_send![services, objectAtIndex: i];
                 let svc_name_ptr: *const NSString = msg_send![rec, getServiceName];
-                let svc_name = if !svc_name_ptr.is_null() { (*svc_name_ptr).to_string() } else { "<unnamed>".into() };
+                let svc_name = if !svc_name_ptr.is_null() {
+                    (*svc_name_ptr).to_string()
+                } else {
+                    "<unnamed>".into()
+                };
 
                 let mut ch: u8 = 0;
                 let ch_r: i32 = msg_send![rec, getRFCOMMChannelID: &mut ch as *mut u8];
                 let mut psm: u16 = 0;
                 let psm_r: i32 = msg_send![rec, getL2CAPPSM: &mut psm as *mut u16];
 
-                let rfcomm_s = if ch_r == 0 { rfcomm_channels.push(ch); format!("RFCOMM={ch}") } else { String::new() };
-                let l2cap_s = if psm_r == 0 { l2cap_psms.push(psm); format!("L2CAP={psm}") } else { String::new() };
+                let rfcomm_s = if ch_r == 0 {
+                    rfcomm_channels.push(ch);
+                    format!("RFCOMM={ch}")
+                } else {
+                    String::new()
+                };
+                let l2cap_s = if psm_r == 0 {
+                    l2cap_psms.push(psm);
+                    format!("L2CAP={psm}")
+                } else {
+                    String::new()
+                };
                 info!("macOS:   [{i}] {svc_name:35} {rfcomm_s:12} {l2cap_s}");
             }
         }
@@ -610,7 +658,7 @@ fn macos_rfcomm_thread(
             msg_send![
                 &*device,
                 openRFCOMMChannelAsync: &mut channel_ptr as *mut *mut AnyObject,
-                withChannelID: RFCOMM_CHANNEL as u8,
+                withChannelID: RFCOMM_CHANNEL,
                 delegate: &*delegate
             ]
         };
@@ -618,7 +666,9 @@ fn macos_rfcomm_thread(
             info!("macOS: openRFCOMMChannelAsync returned success (attempt {attempt})");
             break;
         }
-        if r as u32 == 0xe00002bc { saw_not_permitted = true; }
+        if r as u32 == 0xe00002bc {
+            saw_not_permitted = true;
+        }
         let err_name = macos_ioreturn_name(r as u32);
         info!("macOS: RFCOMM ch {RFCOMM_CHANNEL} attempt {attempt}/5: 0x{r:08x} ({err_name})");
         std::thread::sleep(std::time::Duration::from_secs(1));
@@ -686,7 +736,14 @@ fn macos_rfcomm_thread(
         let ch_id: u8 = msg_send![channel_ptr, getChannelID];
         let is_incoming: bool = msg_send![channel_ptr, isIncoming];
         let delegate_obj: *const AnyObject = msg_send![channel_ptr, delegate];
-        info!("macOS: channel diagnostics: id={ch_id} MTU={mtu} incoming={is_incoming} delegate={}", if delegate_obj.is_null() { "null" } else { "set" });
+        info!(
+            "macOS: channel diagnostics: id={ch_id} MTU={mtu} incoming={is_incoming} delegate={}",
+            if delegate_obj.is_null() {
+                "null"
+            } else {
+                "set"
+            }
+        );
     }
 
     info!("macOS: RFCOMM connected — data streaming active!");
@@ -745,7 +802,12 @@ fn macos_ioreturn_name(code: u32) -> &'static str {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(target_os = "windows")]
-async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, _device_name: &str, _shutdown: &AtomicBool) -> Result<()> {
+async fn rfcomm_reader_loop(
+    handle: &Mw75Handle,
+    address: &str,
+    _device_name: &str,
+    _shutdown: &AtomicBool,
+) -> Result<()> {
     use windows::Devices::Bluetooth::BluetoothDevice;
     use windows::Networking::Sockets::StreamSocket;
     use windows::Storage::Streams::{DataReader, InputStreamOptions};
@@ -783,7 +845,10 @@ async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, _device_name: &s
             return Err(anyhow!("No RFCOMM services found on device {address}"));
         }
         let service = services.GetAt(0)?;
-        (service.ConnectionHostName()?, service.ConnectionServiceName()?)
+        (
+            service.ConnectionHostName()?,
+            service.ConnectionServiceName()?,
+        )
     };
 
     info!(
@@ -820,7 +885,10 @@ async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, _device_name: &s
                 let mut buf = vec![0u8; n as usize];
                 reader.ReadBytes(&mut buf)?;
                 total_bytes += buf.len() as u64;
-                debug!("Windows RFCOMM: read {} bytes (total: {total_bytes})", buf.len());
+                debug!(
+                    "Windows RFCOMM: read {} bytes (total: {total_bytes})",
+                    buf.len()
+                );
                 handle.feed_data(&buf).await;
             }
             Err(e) => {
@@ -839,7 +907,12 @@ async fn rfcomm_reader_loop(handle: &Mw75Handle, address: &str, _device_name: &s
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-async fn rfcomm_reader_loop(_handle: &Mw75Handle, address: &str, _device_name: &str, _shutdown: &AtomicBool) -> Result<()> {
+async fn rfcomm_reader_loop(
+    _handle: &Mw75Handle,
+    address: &str,
+    _device_name: &str,
+    _shutdown: &AtomicBool,
+) -> Result<()> {
     Err(anyhow!(
         "RFCOMM is not supported on this platform. \
          Use Mw75Handle::feed_data() to push raw bytes from an external transport."
@@ -898,6 +971,8 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[allow(clippy::assertions_on_constants)] // compile-time invariant check
     fn read_buf_size_adequate() {
         // Must be larger than one MW75 packet (63 bytes)
         assert!(READ_BUF_SIZE >= 63);

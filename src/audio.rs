@@ -158,11 +158,16 @@ impl Mw75Audio {
     /// Returns the connected [`AudioDevice`] on success.
     pub async fn connect(&mut self) -> Result<AudioDevice> {
         // Get BlueZ adapter
-        let session = bluer::Session::new().await
+        let session = bluer::Session::new()
+            .await
             .context("Failed to connect to BlueZ D-Bus session")?;
-        let adapter = session.default_adapter().await
+        let adapter = session
+            .default_adapter()
+            .await
             .context("No Bluetooth adapter found")?;
-        adapter.set_powered(true).await
+        adapter
+            .set_powered(true)
+            .await
             .context("Failed to power on Bluetooth adapter")?;
 
         info!("Bluetooth adapter: {}", adapter.name());
@@ -251,11 +256,9 @@ impl Mw75Audio {
         let volume = self.config.volume;
 
         // rodio is sync — run on blocking thread pool
-        tokio::task::spawn_blocking(move || {
-            Self::play_file_sync(&path, volume)
-        })
-        .await
-        .context("Playback task panicked")?
+        tokio::task::spawn_blocking(move || Self::play_file_sync(&path, volume))
+            .await
+            .context("Playback task panicked")?
     }
 
     /// Synchronous audio file playback (runs on current thread).
@@ -268,13 +271,11 @@ impl Mw75Audio {
 
         info!("Playing: {path}");
 
-        let (_stream, stream_handle) = OutputStream::try_default()
-            .context("No audio output device available")?;
-        let sink = Sink::try_new(&stream_handle)
-            .context("Failed to create audio sink")?;
+        let (_stream, stream_handle) =
+            OutputStream::try_default().context("No audio output device available")?;
+        let sink = Sink::try_new(&stream_handle).context("Failed to create audio sink")?;
 
-        let file = File::open(path)
-            .with_context(|| format!("Cannot open audio file: {path}"))?;
+        let file = File::open(path).with_context(|| format!("Cannot open audio file: {path}"))?;
         let source = Decoder::new(BufReader::new(file))
             .with_context(|| format!("Cannot decode audio file: {path}"))?;
 
@@ -394,11 +395,13 @@ impl Mw75Audio {
         // Find the BlueTooth sink matching this address
         // PipeWire/PulseAudio creates sinks like "bluez_output.XX_XX_XX_XX_XX_XX.1"
         let addr_str = address.to_string().replace(':', "_");
-        let sink_name = find_bt_sink(&addr_str).await
+        let sink_name = find_bt_sink(&addr_str)
+            .await
             .with_context(|| format!("No PulseAudio/PipeWire sink found for {address}"))?;
 
         // Set as default
-        run_pactl(&["set-default-sink", &sink_name]).await
+        run_pactl(&["set-default-sink", &sink_name])
+            .await
             .context("Failed to set default sink")?;
 
         Ok(sink_name)
@@ -417,7 +420,11 @@ async fn run_pactl(args: &[&str]) -> Result<String> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("pactl {} failed: {}", args.join(" "), stderr.trim()));
+        return Err(anyhow!(
+            "pactl {} failed: {}",
+            args.join(" "),
+            stderr.trim()
+        ));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())

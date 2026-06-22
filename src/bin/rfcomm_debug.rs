@@ -20,11 +20,12 @@ use mw75::types::Mw75Event;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    mw75::logging::init("info");
 
     let config = Mw75ClientConfig {
         scan_timeout_secs: 10,
         name_pattern: "MW75".into(),
+        ..Mw75ClientConfig::default()
     };
     let client = Mw75Client::new(config);
 
@@ -42,7 +43,10 @@ async fn main() -> Result<()> {
         match event {
             Mw75Event::Connected(name) => info!("  Connected: {name}"),
             Mw75Event::Battery(b) => info!("  Battery: {}%", b.level),
-            Mw75Event::Activated(s) => info!("  Activated: EEG={}, Raw={}", s.eeg_enabled, s.raw_mode_enabled),
+            Mw75Event::Activated(s) => info!(
+                "  Activated: EEG={}, Raw={}",
+                s.eeg_enabled, s.raw_mode_enabled
+            ),
             _ => {}
         }
     }
@@ -62,9 +66,9 @@ async fn main() -> Result<()> {
     info!("");
     info!("─── Strategy A: RFCOMM with BLE still connected ───");
     let name_a = device_name.clone();
-    let result_a = tokio::task::spawn_blocking(move || {
-        run_rfcomm_diagnostics(&name_a, "A (BLE connected)")
-    }).await?;
+    let result_a =
+        tokio::task::spawn_blocking(move || run_rfcomm_diagnostics(&name_a, "A (BLE connected)"))
+            .await?;
     info!("Strategy A result: {result_a:?}");
 
     // Strategy B: Disconnect BLE first, then try RFCOMM
@@ -80,9 +84,8 @@ async fn main() -> Result<()> {
 
         let name_b = device_name.clone();
         let label = format!("B (BLE disconnected, settle={settle_ms}ms)");
-        let result_b = tokio::task::spawn_blocking(move || {
-            run_rfcomm_diagnostics(&name_b, &label)
-        }).await?;
+        let result_b =
+            tokio::task::spawn_blocking(move || run_rfcomm_diagnostics(&name_b, &label)).await?;
         info!("  Result: {result_b:?}");
 
         if result_b.is_ok() {
@@ -123,8 +126,16 @@ fn run_rfcomm_diagnostics(device_name: &str, label: &str) -> Result<String> {
                 let name_ptr: *const NSString = msg_send![&*dev, name];
                 let addr_ptr: *const NSString = msg_send![&*dev, addressString];
                 let connected: bool = msg_send![&*dev, isConnected];
-                let name = if !name_ptr.is_null() { (*name_ptr).to_string() } else { "<null>".into() };
-                let addr = if !addr_ptr.is_null() { (*addr_ptr).to_string() } else { "<null>".into() };
+                let name = if !name_ptr.is_null() {
+                    (*name_ptr).to_string()
+                } else {
+                    "<null>".into()
+                };
+                let addr = if !addr_ptr.is_null() {
+                    (*addr_ptr).to_string()
+                } else {
+                    "<null>".into()
+                };
                 info!("[{label}]   [{i}] name={name:30} addr={addr}  connected={connected}");
                 all_devices.push((name, addr, connected));
             }
@@ -142,8 +153,16 @@ fn run_rfcomm_diagnostics(device_name: &str, label: &str) -> Result<String> {
                 let name_ptr: *const NSString = msg_send![&*dev, name];
                 let addr_ptr: *const NSString = msg_send![&*dev, addressString];
                 let connected: bool = msg_send![&*dev, isConnected];
-                let name = if !name_ptr.is_null() { (*name_ptr).to_string() } else { "<null>".into() };
-                let addr = if !addr_ptr.is_null() { (*addr_ptr).to_string() } else { "<null>".into() };
+                let name = if !name_ptr.is_null() {
+                    (*name_ptr).to_string()
+                } else {
+                    "<null>".into()
+                };
+                let addr = if !addr_ptr.is_null() {
+                    (*addr_ptr).to_string()
+                } else {
+                    "<null>".into()
+                };
                 info!("[{label}]   [{i}] name={name:30} addr={addr}  connected={connected}");
             }
         }
@@ -170,7 +189,11 @@ fn run_rfcomm_diagnostics(device_name: &str, label: &str) -> Result<String> {
         }
         match found {
             Some(d) => d,
-            None => return Err(anyhow::anyhow!("Device '{device_name}' not found in paired devices")),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "Device '{device_name}' not found in paired devices"
+                ))
+            }
         }
     };
 
@@ -184,8 +207,10 @@ fn run_rfcomm_diagnostics(device_name: &str, label: &str) -> Result<String> {
     if !is_connected {
         info!("[{label}] Calling openConnection …");
         let result: i32 = unsafe { msg_send![&*device, openConnection] };
-        info!("[{label}] openConnection returned: 0x{result:08x} ({})",
-            if result == 0 { "success" } else { "error" });
+        info!(
+            "[{label}] openConnection returned: 0x{result:08x} ({})",
+            if result == 0 { "success" } else { "error" }
+        );
 
         // Pump run loop up to 8 seconds, checking isConnected
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
@@ -195,8 +220,11 @@ fn run_rfcomm_diagnostics(device_name: &str, label: &str) -> Result<String> {
 
             let connected: bool = unsafe { msg_send![&*device, isConnected] };
             if connected {
-                info!("[{label}] Baseband connected after {} ms",
-                    (std::time::Instant::now() - (deadline - std::time::Duration::from_secs(8))).as_millis());
+                info!(
+                    "[{label}] Baseband connected after {} ms",
+                    (std::time::Instant::now() - (deadline - std::time::Duration::from_secs(8)))
+                        .as_millis()
+                );
                 break;
             }
             if std::time::Instant::now() >= deadline {
@@ -211,9 +239,8 @@ fn run_rfcomm_diagnostics(device_name: &str, label: &str) -> Result<String> {
 
     // ── SDP query ─────────────────────────────────────────────────────────────
     info!("[{label}] Performing SDP query …");
-    let sdp_result: i32 = unsafe {
-        msg_send![&*device, performSDPQuery: std::ptr::null::<AnyObject>()]
-    };
+    let sdp_result: i32 =
+        unsafe { msg_send![&*device, performSDPQuery: std::ptr::null::<AnyObject>()] };
     info!("[{label}] performSDPQuery returned: 0x{sdp_result:08x}");
 
     // Pump run loop for SDP to complete
@@ -325,8 +352,9 @@ fn run_rfcomm_diagnostics(device_name: &str, label: &str) -> Result<String> {
             let mtu: u16 = unsafe { msg_send![channel_ptr, getMTU] };
             info!("[{label}]   ✅ Channel {channel} OPENED! isOpen={is_open} MTU={mtu}");
 
-            // Close it
-            let _: () = unsafe { msg_send![channel_ptr, closeChannel] };
+            // Close it. -[IOBluetoothRFCOMMChannel closeChannel] returns
+            // IOReturn (i32); binding it as () trips objc2's encoding check.
+            let _: i32 = unsafe { msg_send![channel_ptr, closeChannel] };
             info!("[{label}]   Channel {channel} closed.");
 
             return Ok(format!("Channel {channel} opened successfully"));
@@ -370,7 +398,7 @@ fn run_rfcomm_diagnostics(device_name: &str, label: &str) -> Result<String> {
                     let is_open: bool = msg_send![channel_ptr, isOpen];
                     if is_open {
                         info!("[{label}]   ✅ Async channel 25 opened!");
-                        let _: () = msg_send![channel_ptr, closeChannel];
+                        let _: i32 = msg_send![channel_ptr, closeChannel];
                         return Ok("Async channel 25 opened".into());
                     }
                 }
