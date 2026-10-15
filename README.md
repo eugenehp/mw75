@@ -74,7 +74,7 @@ BLE activation (CoreBluetooth) works without this; only RFCOMM streaming
 
 ```toml
 [dependencies]
-mw75 = { version = "0.0.7", features = ["rfcomm"] }
+mw75 = { version = "0.0.8", features = ["rfcomm"] }
 ```
 
 ```rust
@@ -144,7 +144,7 @@ cargo build --features rfcomm,audio
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  BLE Activation (btleplug)                                   │
+│  BLE Activation (webbluetooth)                               │
 │  scan → connect → enable EEG → enable raw mode → battery    │
 └──────────────────┬───────────────────────────────────────────┘
                    │ disconnect BLE
@@ -208,7 +208,7 @@ Channel values: `µV = raw_adc × 0.023842`
 
 ### `mw75_client`
 
-BLE scanning, connection, and activation via btleplug.
+BLE scanning, connection, and activation via webbluetooth.
 
 ```rust
 let client = Mw75Client::new(Mw75ClientConfig::default());
@@ -392,7 +392,7 @@ mw75/
 │   ├── protocol.rs         # GATT UUIDs, BLE commands, wire-format constants
 │   ├── types.rs            # EegPacket, Mw75Event, BatteryInfo, ChecksumStats
 │   ├── parse.rs            # Checksum validation, packet parsing, PacketProcessor
-│   ├── mw75_client.rs      # BLE scanning, connection, activation (btleplug)
+│   ├── mw75_client.rs      # BLE scanning, connection, activation (webbluetooth)
 │   ├── rfcomm.rs           # RFCOMM transport: Linux/macOS/Windows (rfcomm feature)
 │   ├── simulate.rs         # Synthetic packet generator + 500 Hz simulator task
 │   ├── logging.rs          # Shared env-controlled logging (file/pipe redirect)

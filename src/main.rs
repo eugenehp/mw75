@@ -15,7 +15,7 @@ const RECONNECT_DELAY_SECS: u64 = 3;
 fn main() -> Result<()> {
     mw75::logging::init("info");
 
-    // On macOS, CoreBluetooth (btleplug) and IOBluetooth (RFCOMM) both need
+    // On macOS, CoreBluetooth (webbluetooth) and IOBluetooth (RFCOMM) both need
     // the main thread's NSRunLoop to be pumped. We run the tokio async work
     // on a background thread and keep the main thread pumping NSRunLoop.
     let (result_tx, result_rx) = std::sync::mpsc::channel::<Result<()>>();

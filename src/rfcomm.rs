@@ -9,9 +9,9 @@
 //!
 //! | Platform | Backend | Feature gate |
 //! |----------|---------|--------------|
-//! | Linux    | BlueZ `AF_BLUETOOTH` RFCOMM socket via [`bluer`] | `rfcomm` |
-//! | macOS    | IOBluetooth framework via [`objc2-io-bluetooth`] | `rfcomm` |
-//! | Windows  | `Windows.Devices.Bluetooth.Rfcomm` via [`windows`] crate | `rfcomm` |
+//! | Linux    | BlueZ `AF_BLUETOOTH` RFCOMM socket via `bluer` | `rfcomm` |
+//! | macOS    | IOBluetooth framework via `objc2-io-bluetooth` | `rfcomm` |
+//! | Windows  | `Windows.Devices.Bluetooth.Rfcomm` via the `windows` crate | `rfcomm` |
 //!
 //! # macOS permission
 //!
@@ -299,10 +299,10 @@ async fn rfcomm_reader_loop(
     // Share the shutdown flag with the OS thread
     let shutdown_ptr = shutdown as *const AtomicBool as usize;
 
-    // IOBluetooth RFCOMM: the delegate callbacks must be delivered on the
-    // thread that opened the channel. We spawn a dedicated thread with its
-    // own run loop. The key difference from our previous attempts: we now
-    // add an NSMachPort and use runMode:beforeDate: to properly block.
+    // IOBluetooth RFCOMM: open and pump on a dedicated thread with its own run
+    // loop (an NSMachPort keeps runMode:beforeDate: blocking). IOBluetooth
+    // delivers the delegate callbacks on the main thread's run loop, though,
+    // which is why main() keeps that one turning too.
     std::thread::Builder::new()
         .name("rfcomm-runloop".to_string())
         .spawn(move || {
@@ -463,7 +463,7 @@ fn macos_rfcomm_thread(
 
     // ── Step 1: Find the IOBluetoothDevice by name ────────────────────────────
     //
-    // CoreBluetooth (btleplug) gives us a UUID, not a MAC address.
+    // CoreBluetooth (webbluetooth) gives us a UUID, not a MAC address.
     // IOBluetooth is a separate Classic-BT framework, so we search
     // pairedDevices / recentDevices by name to bridge the two worlds.
 

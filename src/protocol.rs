@@ -596,7 +596,7 @@ pub const FETCH_ALL_COMMANDS: [[u8; 5]; 4] = [
 //  EEG Streaming Protocol Constants
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// EEG event ID found in byte[1] of data packets.
+/// EEG event ID found in `byte[1]` of data packets.
 pub const EEG_EVENT_ID: u8 = 239;
 
 /// Total size of one MW75 data packet in bytes.

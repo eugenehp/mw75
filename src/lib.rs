@@ -134,14 +134,14 @@
 //! | [`protocol`] | GATT UUIDs, command bytes, and wire-format constants |
 //! | [`parse`] | Packet parsing, checksum validation, and EEG sample decoding |
 //! | [`simulate`] | Synthetic packet generation and simulator task for testing / TUI |
-//! | [`rfcomm`] | RFCOMM transport — platform-specific BT Classic data streaming (`rfcomm` feature) |
-//! | [`audio`] | Bluetooth A2DP audio connection and playback (`audio` feature, Linux only) |
+//! | `rfcomm` | RFCOMM transport — platform-specific BT Classic data streaming (`rfcomm` feature) |
+//! | `audio` | Bluetooth A2DP audio connection and playback (`audio` feature, Linux only) |
 //!
 //! ## Platform support
 //!
 //! | Capability | Linux | macOS | Windows |
 //! |-----------|-------|-------|---------|
-//! | BLE activation | ✓ (btleplug/BlueZ) | ✓ (btleplug/CoreBluetooth) | ✓ (btleplug/WinRT) |
+//! | BLE activation | ✓ (webbluetooth/BlueZ) | ✓ (webbluetooth/CoreBluetooth) | ✓ (webbluetooth/WinRT) |
 //! | RFCOMM streaming | ✓ (bluer) | ✓ (IOBluetooth) | ✓ (WinRT) |
 //! | A2DP audio | ✓ (bluer + pactl) | ✗ | ✗ |
 //! | Simulation | ✓ | ✓ | ✓ |

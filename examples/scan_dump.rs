@@ -1,4 +1,4 @@
-//! Diagnostic: dump every BLE peripheral CoreBluetooth/btleplug sees.
+//! Diagnostic: dump every BLE peripheral the adapter sees.
 //!
 //! Usage: cargo run --example scan_dump
 //!
@@ -9,35 +9,36 @@
 
 use std::time::Duration;
 
-use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
-use btleplug::platform::Manager;
+use webbluetooth::{Bluetooth, LeScanOptions};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let manager = Manager::new().await?;
-    let adapter = manager
-        .adapters()
-        .await?
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No Bluetooth adapter"))?;
+    let bluetooth = Bluetooth::shared();
 
     println!("Scanning for 15 s — listing ALL peripherals…\n");
-    adapter.start_scan(ScanFilter::default()).await?;
-    tokio::time::sleep(Duration::from_secs(15)).await;
-    adapter.stop_scan().await.ok();
+    let mut scan = bluetooth
+        .request_le_scan(
+            LeScanOptions::accept_all_advertisements()
+                .keep_repeated_devices(true)
+                .accept_all_manufacturer_data(),
+        )
+        .await?;
 
-    let peripherals = adapter.peripherals().await?;
+    // Later packets from a device are folded into its first sighting.
+    let peripherals = scan.collect_for(Duration::from_secs(15)).await;
+    scan.stop();
+
     println!("Found {} peripheral(s):\n", peripherals.len());
 
     for p in peripherals {
-        let props = match p.properties().await {
-            Ok(Some(props)) => props,
-            _ => continue,
-        };
-        let name = props.local_name.unwrap_or_else(|| "<no name>".into());
-        let services: Vec<String> = props.services.iter().map(|u| u.to_string()).collect();
-        let mfg: Vec<String> = props
+        let adv = &p.advertisement;
+        let name = p
+            .name
+            .clone()
+            .or_else(|| adv.local_name.clone())
+            .unwrap_or_else(|| "<no name>".into());
+        let services: Vec<String> = adv.service_uuids.iter().map(|u| u.to_string()).collect();
+        let mfg: Vec<String> = adv
             .manufacturer_data
             .iter()
             .map(|(id, data)| format!("{id:#06x}=[{}]", hex(data)))
@@ -50,8 +51,8 @@ async fn main() -> anyhow::Result<()> {
             ""
         };
         println!("• {name}{mark}");
-        println!("    id:       {}", p.id());
-        println!("    rssi:     {:?}", props.rssi);
+        println!("    id:       {}", p.id);
+        println!("    rssi:     {:?}", p.rssi());
         println!("    services: {services:?}");
         println!("    mfg_data: {mfg:?}");
         println!();

@@ -11,19 +11,14 @@
 //! 6. Tries the second command characteristic (0x1104) too
 //! 7. Probes IOBluetooth SDP records (macOS) for RFCOMM channels
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-#[cfg(target_os = "macos")]
-use btleplug::api::CentralState;
-use btleplug::api::{
-    Central, CharPropFlags, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType,
-};
-use btleplug::platform::{Adapter, Manager, Peripheral};
-use futures::StreamExt;
 use log::{info, warn};
 use uuid::Uuid;
+use webbluetooth::stream::{select_all, StreamExt};
+use webbluetooth::{Bluetooth, BluetoothDevice, Grant, LeScanOptions};
 
 // ── Known UUIDs ───────────────────────────────────────────────────────────────
 
@@ -66,30 +61,38 @@ fn char_label(uuid: &Uuid) -> &'static str {
     }
 }
 
-async fn find_mw75(adapter: &Adapter) -> Result<Peripheral> {
-    adapter.start_scan(ScanFilter::default()).await?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        for p in adapter.peripherals().await? {
-            if let Ok(Some(props)) = p.properties().await {
-                let name = props.local_name.unwrap_or_default();
-                if name.to_uppercase().contains("MW75") {
-                    info!("Found: {name} ({})", p.id());
-                    adapter.stop_scan().await.ok();
-                    return Ok(p);
-                }
+async fn find_mw75(bluetooth: &Bluetooth) -> Result<BluetoothDevice> {
+    let mut scan = bluetooth
+        .request_le_scan(LeScanOptions::accept_all_advertisements().keep_repeated_devices(true))
+        .await?;
+    let found = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(sighting) = scan.next().await {
+            let name = sighting
+                .name
+                .clone()
+                .or_else(|| sighting.advertisement.local_name.clone())
+                .unwrap_or_default();
+            if name.to_uppercase().contains("MW75") {
+                info!("Found: {name} ({})", sighting.id);
+                return Some(sighting);
             }
         }
-        if Instant::now() >= deadline {
-            return Err(anyhow!("Timeout scanning for MW75"));
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
+        None
+    })
+    .await;
+    scan.stop();
+    let sighting = found
+        .ok()
+        .flatten()
+        .ok_or_else(|| anyhow!("Timeout scanning for MW75"))?;
+    Ok(bluetooth
+        .adopt_candidate(&sighting, Grant::all_services())
+        .await?)
 }
 
 /// Collect notifications for N seconds, printing details
 async fn collect_for(
-    notifs: &mut (impl StreamExt<Item = btleplug::api::ValueNotification> + Unpin),
+    notifs: &mut (impl StreamExt<Item = (webbluetooth::BluetoothUuid, Vec<u8>)> + Unpin),
     secs: u64,
     phase: &str,
 ) -> Vec<(Uuid, Vec<u8>)> {
@@ -106,31 +109,32 @@ async fn collect_for(
         }
 
         match tokio::time::timeout(remaining, notifs.next()).await {
-            Ok(Some(n)) => {
-                let lbl = char_label(&n.uuid);
+            Ok(Some((uuid, value))) => {
+                let uuid = uuid.as_uuid();
+                let lbl = char_label(&uuid);
                 let entry = counts.entry(lbl.to_string()).or_insert((0, 0));
                 entry.0 += 1;
-                entry.1 += n.value.len();
+                entry.1 += value.len();
 
                 // Show first 8 notifications per char in full, then just count
                 if entry.0 <= 8 {
-                    let h = hex(&n.value);
+                    let h = hex(&value);
                     info!(
                         "    📨 {lbl:14} #{:<3} ({:>3} B): {h}",
                         entry.0,
-                        n.value.len()
+                        value.len()
                     );
 
                     // Annotate known patterns
-                    if n.value.first() == Some(&0xAA) && n.value.len() >= 4 {
+                    if value.first() == Some(&0xAA) && value.len() >= 4 {
                         info!(
                             "       → sync=0xAA event_id={} data_len={} counter={}",
-                            n.value[1], n.value[2], n.value[3]
+                            value[1], value[2], value[3]
                         );
                     }
-                    if n.value.len() >= 5 && n.value[0] == 0x09 && n.value[1] == 0x9A {
-                        let cmd = n.value[3];
-                        let status = n.value[4];
+                    if value.len() >= 5 && value[0] == 0x09 && value[1] == 0x9A {
+                        let cmd = value[3];
+                        let status = value[4];
                         let cmd_name = match cmd {
                             0x60 => "EEG",
                             0x41 => "RAW_MODE",
@@ -146,7 +150,7 @@ async fn collect_for(
                     info!("    📨 {lbl:14} (suppressing further detail, counting…)");
                 }
 
-                collected.push((n.uuid, n.value));
+                collected.push((uuid, value));
             }
             Ok(None) => {
                 info!("  Stream ended");
@@ -174,66 +178,41 @@ async fn main() -> Result<()> {
     info!("MW75 BLE Probe");
     info!("═══════════════════════════════════════════════════════════════");
 
-    let manager = Manager::new().await?;
-    let adapter = manager
-        .adapters()
-        .await?
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow!("No Bluetooth adapter"))?;
-
-    #[cfg(target_os = "macos")]
-    {
-        let dl = tokio::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            match adapter.adapter_state().await {
-                Ok(CentralState::PoweredOn) => {
-                    info!("Adapter: PoweredOn");
-                    break;
-                }
-                Ok(s) if tokio::time::Instant::now() >= dl => {
-                    warn!("Adapter: {s:?}");
-                    break;
-                }
-                Err(e) => {
-                    warn!("Adapter error: {e}");
-                    break;
-                }
-                _ => {}
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
+    let bluetooth = Bluetooth::shared();
+    match bluetooth.availability().await {
+        Ok(()) => info!("Adapter: PoweredOn"),
+        Err(why) => warn!("Adapter: {why:?}"),
     }
 
-    let peripheral = find_mw75(&adapter).await?;
+    let peripheral = find_mw75(&bluetooth).await?;
+    let gatt = peripheral.gatt();
 
     // ── Connect ───────────────────────────────────────────────────────────────
     info!("\n═══ Connecting …");
-    peripheral.connect().await?;
+    gatt.connect().await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
-    peripheral.discover_services().await?;
+    let mut chars = gatt.get_characteristics().await?;
+    chars.sort_by_key(|c| c.uuid().as_uuid());
     info!("Connected.\n");
-
-    let chars: BTreeSet<Characteristic> = peripheral.characteristics();
 
     // ── Characteristics ───────────────────────────────────────────────────────
     info!("═══ CHARACTERISTICS ({}) ═══", chars.len());
     for c in &chars {
         info!(
             "  {:<14} uuid={}  svc={}  props={:?}",
-            char_label(&c.uuid),
-            c.uuid,
-            c.service_uuid,
-            c.properties
+            char_label(&c.uuid().as_uuid()),
+            c.uuid(),
+            c.service_uuid(),
+            c.properties()
         );
     }
 
     // ── Read all readable ─────────────────────────────────────────────────────
     info!("\n═══ READING READABLE CHARACTERISTICS ═══");
     for c in &chars {
-        if c.properties.contains(CharPropFlags::READ) {
-            let lbl = char_label(&c.uuid);
-            match peripheral.read(c).await {
+        if c.properties().read() {
+            let lbl = char_label(&c.uuid().as_uuid());
+            match c.read_value().await {
                 Ok(data) => {
                     info!("  {lbl:14} ({} B): {}", data.len(), hex(&data));
                     let ascii: String = data
@@ -255,18 +234,20 @@ async fn main() -> Result<()> {
 
     // ── Subscribe ─────────────────────────────────────────────────────────────
     info!("\n═══ SUBSCRIBING TO NOTIFY/INDICATE ═══");
+    let mut subscriptions = Vec::new();
     for c in &chars {
-        if c.properties.contains(CharPropFlags::NOTIFY)
-            || c.properties.contains(CharPropFlags::INDICATE)
-        {
-            let lbl = char_label(&c.uuid);
-            match peripheral.subscribe(c).await {
-                Ok(()) => info!("  ✅ {lbl} ({})", c.uuid),
+        if c.properties().notify() || c.properties().indicate() {
+            let lbl = char_label(&c.uuid().as_uuid());
+            match c.start_notifications().await {
+                Ok(notifications) => {
+                    info!("  ✅ {lbl} ({})", c.uuid());
+                    subscriptions.push(notifications.tagged());
+                }
                 Err(e) => warn!("  ❌ {lbl}: {e}"),
             }
         }
     }
-    let mut notifications = peripheral.notifications().await?;
+    let mut notifications = select_all(subscriptions);
 
     // ── Phase 1: Baseline (3s) ────────────────────────────────────────────────
     info!("\n═══ PHASE 1: Baseline (no commands sent) ═══");
@@ -274,11 +255,9 @@ async fn main() -> Result<()> {
 
     // ── Phase 2: ENABLE_EEG → CMD_1101 ───────────────────────────────────────
     info!("\n═══ PHASE 2: ENABLE_EEG → CMD_1101 ═══");
-    let c1101 = chars.iter().find(|c| c.uuid == CMD_1101);
+    let c1101 = chars.iter().find(|c| c.uuid().as_uuid() == CMD_1101);
     if let Some(c) = c1101 {
-        peripheral
-            .write(c, &ENABLE_EEG, WriteType::WithResponse)
-            .await?;
+        c.write_value_with_response(&ENABLE_EEG).await?;
         info!("  ✅ Sent: {}", hex(&ENABLE_EEG));
     }
     collect_for(&mut notifications, 5, "after ENABLE_EEG").await;
@@ -286,9 +265,7 @@ async fn main() -> Result<()> {
     // ── Phase 3: ENABLE_RAW → CMD_1101 ───────────────────────────────────────
     info!("\n═══ PHASE 3: ENABLE_RAW → CMD_1101 ═══");
     if let Some(c) = c1101 {
-        peripheral
-            .write(c, &ENABLE_RAW, WriteType::WithResponse)
-            .await?;
+        c.write_value_with_response(&ENABLE_RAW).await?;
         info!("  ✅ Sent: {}", hex(&ENABLE_RAW));
     }
     collect_for(&mut notifications, 5, "after ENABLE_RAW").await;
@@ -296,16 +273,14 @@ async fn main() -> Result<()> {
     // ── Phase 4: BATTERY → CMD_1101 ──────────────────────────────────────────
     info!("\n═══ PHASE 4: BATTERY → CMD_1101 ═══");
     if let Some(c) = c1101 {
-        peripheral
-            .write(c, &BATTERY, WriteType::WithResponse)
-            .await?;
+        c.write_value_with_response(&BATTERY).await?;
         info!("  ✅ Sent: {}", hex(&BATTERY));
     }
     collect_for(&mut notifications, 3, "after BATTERY").await;
 
     // ── Phase 5: Same commands → CMD_1104 (second service) ───────────────────
     info!("\n═══ PHASE 5: Commands → CMD_1104 (second service) ═══");
-    let c1104 = chars.iter().find(|c| c.uuid == CMD_1104);
+    let c1104 = chars.iter().find(|c| c.uuid().as_uuid() == CMD_1104);
     if let Some(c) = c1104 {
         for (name, cmd) in [
             ("ENABLE_EEG", ENABLE_EEG),
@@ -313,7 +288,7 @@ async fn main() -> Result<()> {
             ("BATTERY", BATTERY),
         ] {
             info!("  Sending {name} → CMD_1104 …");
-            match peripheral.write(c, &cmd, WriteType::WithResponse).await {
+            match c.write_value_with_response(&cmd).await {
                 Ok(()) => info!("  ✅ Sent: {}", hex(&cmd)),
                 Err(e) => warn!("  ❌ {e}"),
             }
@@ -373,9 +348,9 @@ async fn main() -> Result<()> {
     // ── Phase 7: Re-read readables (post-activation) ──────────────────────────
     info!("\n═══ PHASE 7: Re-read all readables (post-activation) ═══");
     for c in &chars {
-        if c.properties.contains(CharPropFlags::READ) {
-            let lbl = char_label(&c.uuid);
-            match peripheral.read(c).await {
+        if c.properties().read() {
+            let lbl = char_label(&c.uuid().as_uuid());
+            match c.read_value().await {
                 Ok(data) => info!("  {lbl:14} ({} B): {}", data.len(), hex(&data)),
                 Err(e) => info!("  {lbl:14} error: {e}"),
             }
@@ -386,13 +361,10 @@ async fn main() -> Result<()> {
     info!("\n═══ PHASE 8: Write ENABLE_EEG via WRITE_WITHOUT_RESPONSE ═══");
     for uuid in [DATA_1103, DATA_1106] {
         let lbl = char_label(&uuid);
-        if let Some(c) = chars.iter().find(|c| c.uuid == uuid) {
-            if c.properties.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE) {
+        if let Some(c) = chars.iter().find(|c| c.uuid().as_uuid() == uuid) {
+            if c.properties().write_without_response() {
                 info!("  Writing ENABLE_EEG → {lbl} …");
-                match peripheral
-                    .write(c, &ENABLE_EEG, WriteType::WithoutResponse)
-                    .await
-                {
+                match c.write_value_without_response(&ENABLE_EEG).await {
                     Ok(()) => {
                         info!("  ✅ Sent");
                     }
@@ -408,17 +380,11 @@ async fn main() -> Result<()> {
     // ── Cleanup ───────────────────────────────────────────────────────────────
     info!("\n═══ CLEANUP: Disable & disconnect ═══");
     if let Some(c) = c1101 {
-        peripheral
-            .write(c, &DISABLE_RAW, WriteType::WithResponse)
-            .await
-            .ok();
+        c.write_value_with_response(&DISABLE_RAW).await.ok();
         tokio::time::sleep(Duration::from_millis(200)).await;
-        peripheral
-            .write(c, &DISABLE_EEG, WriteType::WithResponse)
-            .await
-            .ok();
+        c.write_value_with_response(&DISABLE_EEG).await.ok();
     }
-    peripheral.disconnect().await.ok();
+    gatt.disconnect();
     info!("Disconnected.");
 
     // ── macOS: SDP probe ──────────────────────────────────────────────────────

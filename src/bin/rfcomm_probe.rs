@@ -10,13 +10,10 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, WriteType};
-use btleplug::platform::{Adapter, Manager, Peripheral};
-use futures::StreamExt;
-use log::info;
-#[cfg(target_os = "macos")]
-use log::warn;
+use log::{info, warn};
 use uuid::Uuid;
+use webbluetooth::stream::StreamExt;
+use webbluetooth::{Bluetooth, BluetoothDevice, Grant, LeScanOptions};
 
 const CMD_1101: Uuid = Uuid::from_u128(0x00001101_d102_11e1_9b23_00025b00a5a5);
 const STATUS_1102: Uuid = Uuid::from_u128(0x00001102_d102_11e1_9b23_00025b00a5a5);
@@ -31,25 +28,33 @@ fn hex(data: &[u8]) -> String {
         .join(" ")
 }
 
-async fn find_mw75(adapter: &Adapter) -> Result<Peripheral> {
-    adapter.start_scan(ScanFilter::default()).await?;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        for p in adapter.peripherals().await? {
-            if let Ok(Some(props)) = p.properties().await {
-                let name = props.local_name.unwrap_or_default();
-                if name.to_uppercase().contains("MW75") {
-                    info!("Found: {name} ({})", p.id());
-                    adapter.stop_scan().await.ok();
-                    return Ok(p);
-                }
+async fn find_mw75(bluetooth: &Bluetooth) -> Result<BluetoothDevice> {
+    let mut scan = bluetooth
+        .request_le_scan(LeScanOptions::accept_all_advertisements().keep_repeated_devices(true))
+        .await?;
+    let found = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(sighting) = scan.next().await {
+            let name = sighting
+                .name
+                .clone()
+                .or_else(|| sighting.advertisement.local_name.clone())
+                .unwrap_or_default();
+            if name.to_uppercase().contains("MW75") {
+                info!("Found: {name} ({})", sighting.id);
+                return Some(sighting);
             }
         }
-        if Instant::now() >= deadline {
-            return Err(anyhow!("Timeout scanning for MW75"));
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
+        None
+    })
+    .await;
+    scan.stop();
+    let sighting = found
+        .ok()
+        .flatten()
+        .ok_or_else(|| anyhow!("Timeout scanning for MW75"))?;
+    Ok(bluetooth
+        .adopt_candidate(&sighting, Grant::all_services())
+        .await?)
 }
 
 #[tokio::main]
@@ -60,70 +65,39 @@ async fn main() -> Result<()> {
     info!("MW75 RFCOMM Data Probe v2");
     info!("═══════════════════════════════════════════════════════════════");
 
-    let manager = Manager::new().await?;
-    let adapter = manager
-        .adapters()
-        .await?
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow!("No Bluetooth adapter"))?;
-
-    #[cfg(target_os = "macos")]
-    {
-        use btleplug::api::CentralState;
-        let dl = tokio::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            match adapter.adapter_state().await {
-                Ok(CentralState::PoweredOn) => {
-                    info!("Adapter: PoweredOn");
-                    break;
-                }
-                Ok(s) if tokio::time::Instant::now() >= dl => {
-                    warn!("Adapter: {s:?}");
-                    break;
-                }
-                Err(e) => {
-                    warn!("Adapter error: {e}");
-                    break;
-                }
-                _ => {}
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
+    let bluetooth = Bluetooth::shared();
+    match bluetooth.availability().await {
+        Ok(()) => info!("Adapter: PoweredOn"),
+        Err(why) => warn!("Adapter: {why:?}"),
     }
 
-    let peripheral = find_mw75(&adapter).await?;
+    let peripheral = find_mw75(&bluetooth).await?;
+    let gatt = peripheral.gatt();
 
     // ── Phase 1: BLE activation ───────────────────────────────────────────────
     info!("\n═══ Phase 1: BLE Activation ═══");
-    peripheral.connect().await?;
+    gatt.connect().await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
-    peripheral.discover_services().await?;
+    let chars = gatt.get_characteristics().await?;
     info!("Connected.");
 
-    let chars = peripheral.characteristics();
     let cmd_char = chars
         .iter()
-        .find(|c| c.uuid == CMD_1101)
+        .find(|c| c.uuid().as_uuid() == CMD_1101)
         .ok_or_else(|| anyhow!("CMD_1101 not found"))?;
     let status_char = chars
         .iter()
-        .find(|c| c.uuid == STATUS_1102)
+        .find(|c| c.uuid().as_uuid() == STATUS_1102)
         .ok_or_else(|| anyhow!("STATUS_1102 not found"))?;
 
-    peripheral.subscribe(status_char).await?;
-    let mut notifications = peripheral.notifications().await?;
+    let mut notifications = status_char.start_notifications().await?;
 
     info!("Sending ENABLE_EEG…");
-    peripheral
-        .write(cmd_char, &ENABLE_EEG, WriteType::WithResponse)
-        .await?;
+    cmd_char.write_value_with_response(&ENABLE_EEG).await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     info!("Sending ENABLE_RAW…");
-    peripheral
-        .write(cmd_char, &ENABLE_RAW, WriteType::WithResponse)
-        .await?;
+    cmd_char.write_value_with_response(&ENABLE_RAW).await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Collect responses
@@ -134,13 +108,14 @@ async fn main() -> Result<()> {
             break;
         }
         match tokio::time::timeout(remaining, notifications.next()).await {
-            Ok(Some(n)) => info!("  STATUS: {}", hex(&n.value)),
+            Ok(Some(value)) => info!("  STATUS: {}", hex(&value)),
             _ => break,
         }
     }
 
-    let props = peripheral.properties().await?.unwrap_or_default();
-    let device_name = props.local_name.unwrap_or_else(|| "MW75 Neuro".to_string());
+    let device_name = peripheral
+        .name()
+        .unwrap_or_else(|| "MW75 Neuro".to_string());
     info!("Device name: {device_name}");
 
     // ── Strategy A: RFCOMM while BLE is still connected ───────────────────────
@@ -157,7 +132,7 @@ async fn main() -> Result<()> {
                 info!("\n═══ Phase 4: RFCOMM Data Stream ═══");
                 let name2 = device_name.clone();
                 rfcomm_data_phase_macos(&name2).await?;
-                peripheral.disconnect().await.ok();
+                gatt.disconnect();
                 info!("\n═══ DONE ═══");
                 return Ok(());
             }
@@ -166,7 +141,7 @@ async fn main() -> Result<()> {
 
         // ── Strategy B: Disconnect BLE, try RFCOMM with various settle times ──
         info!("\n═══ Strategy B: Disconnect BLE first ═══");
-        peripheral.disconnect().await?;
+        gatt.disconnect();
         info!("BLE disconnected.");
         drop(notifications);
 
@@ -193,19 +168,15 @@ async fn main() -> Result<()> {
 
         // ── Strategy C: Re-activate BLE, then try RFCOMM with BLE alive ───────
         info!("\n═══ Strategy C: Re-activate BLE, keep alive, try RFCOMM ═══");
-        let peripheral2 = find_mw75(&adapter).await?;
-        peripheral2.connect().await?;
+        let peripheral2 = find_mw75(&bluetooth).await?;
+        let gatt2 = peripheral2.gatt();
+        gatt2.connect().await?;
         tokio::time::sleep(Duration::from_millis(500)).await;
-        peripheral2.discover_services().await?;
-        let chars2 = peripheral2.characteristics();
-        if let Some(cmd) = chars2.iter().find(|c| c.uuid == CMD_1101) {
-            peripheral2
-                .write(cmd, &ENABLE_EEG, WriteType::WithResponse)
-                .await?;
+        let chars2 = gatt2.get_characteristics().await?;
+        if let Some(cmd) = chars2.iter().find(|c| c.uuid().as_uuid() == CMD_1101) {
+            cmd.write_value_with_response(&ENABLE_EEG).await?;
             tokio::time::sleep(Duration::from_millis(200)).await;
-            peripheral2
-                .write(cmd, &ENABLE_RAW, WriteType::WithResponse)
-                .await?;
+            cmd.write_value_with_response(&ENABLE_RAW).await?;
             tokio::time::sleep(Duration::from_millis(500)).await;
             info!("  BLE re-activated, EEG+RAW enabled");
         }
@@ -228,12 +199,12 @@ async fn main() -> Result<()> {
             Err(e) => info!("  ❌ Strategy C failed: {e}"),
         }
 
-        peripheral2.disconnect().await.ok();
+        gatt2.disconnect();
     }
 
     #[cfg(target_os = "linux")]
     {
-        peripheral.disconnect().await?;
+        gatt.disconnect();
         tokio::time::sleep(Duration::from_millis(1500)).await;
         rfcomm_data_probe_linux(&device_name).await?;
     }

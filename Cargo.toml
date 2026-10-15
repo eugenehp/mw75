@@ -1,8 +1,8 @@
 [package]
 name          = "mw75"
-version       = "0.0.7"
+version       = "0.0.8"
 edition       = "2021"
-description   = "Rust client for MW75 Neuro EEG headphones over BLE + RFCOMM using btleplug"
+description   = "Rust client for MW75 Neuro EEG headphones over BLE + RFCOMM using webbluetooth"
 keywords      = ["exg", "eeg", "mw75", "neuro", "bci"]
 authors       = ["Eugene Hauptmann"]
 license       = "GPL-3.0"
@@ -49,7 +49,7 @@ required-features = ["rfcomm"]
 
 # ── Features ──────────────────────────────────────────────────────────────────
 #
-# default  — TUI only (no heavy Bluetooth deps beyond btleplug)
+# default  — TUI only (no heavy Bluetooth deps beyond webbluetooth)
 # tui      — ratatui + crossterm for the terminal UI
 # rfcomm   — RFCOMM data transport for real EEG streaming.
 #            Linux: bluer (BlueZ), macOS: IOBluetooth, Windows: WinRT.
@@ -71,7 +71,10 @@ rfcomm  = ["dep:bluer", "dep:objc2", "dep:objc2-foundation", "dep:objc2-io-bluet
 # ── Core dependencies ─────────────────────────────────────────────────────────
 
 [dependencies]
-btleplug   = "0.11.8"
+# `uuid` lets the `Uuid` constants in `protocol.rs` name attributes directly;
+# `unrestricted` is needed to enumerate every service on the device and to
+# match on manufacturer data without naming a company identifier up front.
+webbluetooth = { version = "0.0.4", path = "../webbluetooth/crates/webbluetooth", features = ["uuid", "unrestricted"] }
 tokio      = { version = "1", features = ["full"] }
 uuid       = { version = "1", features = ["v4"] }
 futures    = "0.3"
